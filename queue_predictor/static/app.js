@@ -24,7 +24,9 @@ async function loadLocations() {
   locations = await api("/api/locations");
   const select = $("location");
   select.innerHTML = locations.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
-  locationId = locations[0].id;
+  const wanted = Number(new URLSearchParams(window.location.search).get("location"));
+  locationId = (locations.find((l) => l.id === wanted) || locations[0]).id;
+  select.value = locationId;
   onLocationChange();
 }
 

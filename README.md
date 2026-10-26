@@ -14,6 +14,8 @@ the queue size, waiting time and risk of congestion 5–15 minutes ahead. Staff 
 warning and a concrete recommendation, such as *"Open 1 more counter now"*. This moves queue management from
 **reactive** to **proactive**.
 
+![Dashboard: a lunch-time rush turns HIGH risk and the system recommends opening more counters](docs/dashboard.png)
+
 ## Example
 
 | Current queue | Predicted in 10 min | Expected wait | Risk |
