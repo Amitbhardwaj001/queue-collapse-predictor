@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.js linguist-vendored=false
+queue_predictor/static/vendor/** linguist-vendored

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Queue Collapse Predictor</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+</head>
+<body>
+<header>
+  <div>
+    <h1>AI Queue Collapse Predictor</h1>
+    <p class="sub">YOLOv8 people counting &rarr; XGBoost forecasting &rarr; early congestion warning</p>
+  </div>
+  <div class="loc">
+    <a class="poster-link" href="/poster" target="_blank">Project poster</a>
+    <label for="location">Location</label>
+    <select id="location"></select>
+  </div>
+</header>
+
+<main>
+  <section class="cards">
+    <div class="card"><span class="label">Current queue</span><span class="value" id="current">–</span><span class="hint" id="asof">No data yet</span></div>
+    <div class="card"><span class="label">Predicted in <span id="horizon">10</span> min</span><span class="value" id="predicted">–</span><span class="hint" id="trend">&nbsp;</span></div>
+    <div class="card"><span class="label">Estimated waiting time</span><span class="value" id="wait">–</span><span class="hint" id="wait-future">&nbsp;</span></div>
+    <div class="card risk" id="risk-card"><span class="label">Congestion risk</span><span class="value" id="risk">–</span><span class="hint" id="probability">&nbsp;</span></div>
+  </section>
+
+  <section class="advice" id="advice" hidden></section>
+
+  <section class="grid">
+    <div class="panel wide">
+      <div class="panel-head">
+        <h2>Queue history &amp; forecast</h2>
+        <span class="muted">x-axis: minutes relative to the latest reading</span>
+      </div>
+      <div class="chart-box"><canvas id="chart"></canvas></div>
+    </div>
+
+    <div class="panel">
+      <h2>Analyse queue footage</h2>
+      <form id="upload-form">
+        <label class="drop" id="drop">
+          <input type="file" id="file" name="file" accept="image/*,video/*">
+          <span id="drop-text">Click or drop an image / video of the queue</span>
+        </label>
+        <button type="submit" id="upload-btn">Detect &amp; predict</button>
+      </form>
+      <p class="status" id="upload-status"></p>
+      <img id="result-img" alt="Detected people" hidden>
+    </div>
+
+    <div class="panel">
+      <h2>Queue area</h2>
+      <p class="muted" id="roi-help">Analyse an image (or start the camera) first, then drag on the frame to mark where the queue stands. Only people whose feet are inside the area are counted.</p>
+      <div class="roi-box" id="roi-box" hidden>
+        <img id="roi-img" alt="Last analysed frame">
+        <canvas id="roi-canvas"></canvas>
+      </div>
+      <div class="row roi-actions">
+        <button id="roi-save" disabled>Save area</button>
+        <button id="roi-clear" class="secondary">Use whole frame</button>
+      </div>
+      <p class="status" id="roi-status"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Live sources</h2>
+      <div class="live-block" id="demo-block">
+        <h3>Simulated live feed</h3>
+        <p class="muted">Replays a lunch-time rush, one simulated minute per tick. Change the counters below while it runs to see the forecast react.</p>
+        <div class="row">
+          <button id="demo-start">Start</button>
+          <button id="demo-stop" class="secondary" disabled>Stop</button>
+          <button id="demo-reset" class="secondary">Reset</button>
+        </div>
+      </div>
+      <div class="live-block">
+        <h3>Webcam</h3>
+        <p class="muted">Counts people from your camera every <span id="cam-interval">10</span> seconds.</p>
+        <div class="row">
+          <button id="cam-start">Start camera</button>
+          <button id="cam-stop" class="secondary" disabled>Stop</button>
+        </div>
+        <video id="video" autoplay muted playsinline hidden></video>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Service settings</h2>
+      <form id="settings-form" class="settings">
+        <label>Open counters <input type="number" id="counters" min="1" max="20" required></label>
+        <label>Seconds to serve one person <input type="number" id="service" min="5" max="900" step="1" required></label>
+        <button type="submit">Save</button>
+      </form>
+      <p class="muted small">Risk thresholds: MEDIUM at {{ medium_wait }}+ min wait, HIGH at {{ high_wait }}+ min wait or a high predicted probability of critical congestion.</p>
+      <p class="status" id="settings-status"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Early warnings</h2>
+      <ul id="alerts" class="alerts"><li class="muted">No warnings yet.</li></ul>
+    </div>
+
+    <div class="panel">
+      <h2>Model accuracy</h2>
+      {% if metrics %}
+      <table class="metrics">
+        <tr><th>Horizon</th><th>R²</th><th>MAE (all day)</th><th>MAE (busy)</th><th>Naive (busy)</th></tr>
+        {% for h, m in metrics.horizons.items() %}
+        <tr><td>+{{ h }} min</td><td>{{ m.r2 }}</td><td>{{ m.mae }}</td><td><strong>{{ m.busy_mae }}</strong></td><td>{{ m.busy_baseline_mae }}</td></tr>
+        {% endfor %}
+      </table>
+      <p class="muted small">Critical-congestion classifier AUC: {{ metrics.critical.auc }}. MAE = average error in people. "Busy" = {{ metrics.busy_queue }}+ people waiting. "Naive" assumes the queue stays the same.</p>
+      {% else %}
+      <p class="muted">Run <code>python -m queue_predictor.train</code> to see metrics.</p>
+      {% endif %}
+    </div>
+  </section>
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

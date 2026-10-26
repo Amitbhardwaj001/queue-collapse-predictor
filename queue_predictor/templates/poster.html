@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Queue Collapse Predictor – Poster</title>
+  <style>
+    @page { size: A3 portrait; margin: 12mm; }
+    :root { --ink: #111827; --muted: #4b5563; --accent: #2563eb; --line: #dbe2ef;
+            --low: #16a34a; --medium: #d97706; --high: #dc2626; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; color: var(--ink); background: #e5e7eb; }
+    .sheet { max-width: 1100px; margin: 24px auto; background: #fff; padding: 36px 40px 28px; }
+    .print-tip { max-width: 1100px; margin: 16px auto 0; padding: 0 16px; color: var(--muted); font-size: 14px; }
+    header { text-align: center; border-bottom: 4px solid var(--accent); padding-bottom: 18px; margin-bottom: 22px; }
+    header h1 { margin: 0; font-size: 46px; letter-spacing: -.5px; }
+    header .tag { margin: 8px 0 0; font-size: 20px; color: var(--muted); }
+    header .team { margin-top: 10px; font-size: 16px; }
+    h2 { font-size: 22px; margin: 0 0 10px; color: var(--accent); border-left: 6px solid var(--accent); padding-left: 10px; }
+    p, li { font-size: 15.5px; line-height: 1.5; }
+    ul { padding-left: 20px; margin: 6px 0; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 30px; }
+    .full { grid-column: 1 / -1; }
+    .box { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+    .problem { background: #fef2f2; border-color: #fecaca; }
+    .solution { background: #eff6ff; border-color: #bfdbfe; }
+    .pipeline { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: center; gap: 8px; }
+    .step { flex: 1 1 130px; max-width: 170px; background: #f8fafc; border: 2px solid var(--accent); border-radius: 12px;
+            padding: 12px 10px; text-align: center; font-size: 14px; }
+    .step b { display: block; font-size: 15.5px; margin-bottom: 4px; }
+    .arrow { align-self: center; font-size: 26px; color: var(--accent); }
+    .example { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center; }
+    .example div { border-radius: 10px; padding: 12px 6px; background: #f8fafc; border: 1px solid var(--line); }
+    .example .num { font-size: 30px; font-weight: 700; display: block; }
+    .example .high { background: #fdecec; border-color: #f5b5b5; color: var(--high); }
+    .advice { margin-top: 10px; padding: 10px 14px; border-left: 6px solid var(--high); background: #fdecec; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; font-size: 15px; }
+    th, td { padding: 7px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+    th { background: #f1f5f9; }
+    .big { font-size: 34px; font-weight: 700; color: var(--accent); }
+    .kpis { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+    .kpi { flex: 1 1 150px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+    .kpi span { display: block; color: var(--muted); font-size: 13.5px; }
+    .risk { display: inline-block; padding: 2px 10px; border-radius: 999px; color: #fff; font-weight: 700; font-size: 13px; }
+    .risk.LOW { background: var(--low); } .risk.MEDIUM { background: var(--medium); } .risk.HIGH { background: var(--high); }
+    .tech { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tech span { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 5px 12px; font-size: 14px; }
+    footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; text-align: center; }
+    @media print {
+      body { background: #fff; }
+      .sheet { margin: 0; padding: 0; max-width: none; }
+      .print-tip { display: none; }
+    }
+    @media (max-width: 800px) {
+      .grid, .example { grid-template-columns: 1fr; }
+      header h1 { font-size: 32px; }
+      .arrow { display: none; }
+    }
+  </style>
+</head>
+<body>
+<p class="print-tip">Tip: press <b>Ctrl + P</b> → "Save as PDF" (A3, portrait, background graphics on) to print this poster.
+  Replace the team line by editing <code>queue_predictor/templates/poster.html</code>.</p>
+<div class="sheet">
+  <header>
+    <h1>AI Queue Collapse Predictor</h1>
+    <p class="tag">Predicting overcrowded queues <em>before</em> they happen &mdash; with computer vision and machine learning</p>
+    <p class="team">Team: ____________________ &nbsp;|&nbsp; Guide: ____________________ &nbsp;|&nbsp; Department: ____________________</p>
+  </header>
+
+  <div class="grid">
+    <section class="box problem">
+      <h2>The problem</h2>
+      <p>Canteens, hospitals, banks and ticket counters only react <b>after</b> a queue has already become too long.
+        By the time staff notice, people are waiting 15&ndash;20 minutes, some give up and leave, and opening another
+        counter takes time.</p>
+      <p>CCTV cameras can show how long the queue is <em>now</em>, but not how long it <em>will</em> be.</p>
+    </section>
+
+    <section class="box solution">
+      <h2>Our solution</h2>
+      <p>A system that watches the queue through a camera, counts people automatically, learns how the queue grows,
+        and predicts the queue size, waiting time and risk of collapse <b>10&ndash;15 minutes ahead</b>.</p>
+      <p>It moves queue management from <b>reactive</b> to <b>proactive</b>: it recommends opening a counter
+        <em>before</em> congestion happens.</p>
+    </section>
+
+    <section class="full">
+      <h2>How it works</h2>
+      <div class="pipeline">
+        <div class="step"><b>1. Camera</b>Image, video or live webcam</div>
+        <div class="arrow">&rarr;</div>
+        <div class="step"><b>2. YOLOv8</b>Detects every person in the frame</div>
+        <div class="arrow">&rarr;</div>
+        <div class="step"><b>3. Queue area</b>Counts only people standing in the queue zone</div>
+        <div class="arrow">&rarr;</div>
+        <div class="step"><b>4. History</b>Counts stored per minute in a database</div>
+        <div class="arrow">&rarr;</div>
+        <div class="step"><b>5. XGBoost</b>Forecasts queue +5/+10/+15 min and congestion risk</div>
+        <div class="arrow">&rarr;</div>
+        <div class="step"><b>6. Dashboard</b>Waiting time, risk level, early warning, advice</div>
+      </div>
+    </section>
+
+    <section class="box">
+      <h2>What the model looks at</h2>
+      <ul>
+        <li>Current queue length</li>
+        <li>Queue 1, 2, 3, 5 and 10 minutes ago</li>
+        <li>How fast the queue is growing or shrinking, and how unsteady it is</li>
+        <li>Time of day (rush hours) and day of the week</li>
+        <li>Number of open counters and service speed (people served per minute)</li>
+      </ul>
+      <p><b>Waiting time</b> = people in queue &divide; (counters &times; people served per counter per minute)</p>
+    </section>
+
+    <section class="box">
+      <h2>Risk levels</h2>
+      <table>
+        <tr><th>Level</th><th>When</th></tr>
+        <tr><td><span class="risk LOW">LOW</span></td><td>Expected wait under {{ medium_wait }} min</td></tr>
+        <tr><td><span class="risk MEDIUM">MEDIUM</span></td><td>Wait {{ medium_wait }}+ min, or 30%+ chance of critical congestion</td></tr>
+        <tr><td><span class="risk HIGH">HIGH</span></td><td>Wait {{ high_wait }}+ min, or 60%+ chance of critical congestion</td></tr>
+      </table>
+      <p>The system also calculates how many counters are needed to keep the wait under {{ target_wait }} minutes and
+        recommends opening extra ones.</p>
+    </section>
+
+    <section class="box full">
+      <h2>Example prediction</h2>
+      <div class="example">
+        <div><span class="num">20</span>people now</div>
+        <div><span class="num">45</span>expected in 10 min</div>
+        <div><span class="num">15 min</span>expected wait</div>
+        <div class="high"><span class="num">HIGH</span>congestion risk</div>
+      </div>
+      <div class="advice">Recommendation: "Open 1 more counter now &ndash; the queue is expected to reach 45 people in 10 minutes."</div>
+    </section>
+
+    <section class="box full">
+      <h2>Results</h2>
+      {% if metrics %}
+      <div class="kpis">
+        <div class="kpi"><span>Critical-congestion detection (AUC)</span><b class="big">{{ metrics.critical.auc }}</b></div>
+        <div class="kpi"><span>Variance explained, 10-min forecast (R²)</span><b class="big">{{ metrics.horizons['10'].r2 }}</b></div>
+        <div class="kpi"><span>Avg. error at rush hour, 10 min ahead</span><b class="big">&plusmn;{{ metrics.horizons['10'].busy_mae }}</b> people</div>
+      </div>
+      <table>
+        <tr><th>Forecast horizon</th><th>R²</th><th>Average error (all day)</th><th>Average error (busy, {{ metrics.busy_queue }}+ people)</th><th>Naive guess "no change" (busy)</th></tr>
+        {% for h, m in metrics.horizons.items() %}
+        <tr><td>+{{ h }} minutes</td><td>{{ m.r2 }}</td><td>{{ m.mae }} people</td><td><b>{{ m.busy_mae }} people</b></td><td>{{ m.busy_baseline_mae }} people</td></tr>
+        {% endfor %}
+      </table>
+      <p>Trained on {{ "{:,}".format(metrics.train_rows) }} minutes and tested on {{ "{:,}".format(metrics.test_rows) }} unseen minutes
+        ({{ metrics.days }} simulated canteen days with breakfast, lunch and evening rushes, class-break surges,
+        weekends, under-staffing and people leaving long queues). Tested only on later days the model never saw.</p>
+      {% else %}
+      <p>Run <code>python -m queue_predictor.train</code> to fill in the results.</p>
+      {% endif %}
+    </section>
+
+    <section class="box">
+      <h2>Technologies</h2>
+      <div class="tech">
+        <span>Python</span><span>OpenCV</span><span>YOLOv8 (Ultralytics)</span><span>XGBoost</span>
+        <span>scikit-learn</span><span>pandas</span><span>Flask</span><span>SQLite</span>
+        <span>HTML / CSS / JavaScript</span><span>Chart.js</span>
+      </div>
+    </section>
+
+    <section class="box">
+      <h2>Applications &amp; future work</h2>
+      <ul>
+        <li>College canteens, hospital OPDs, banks, railway &amp; ticket counters</li>
+        <li>Retrain on real camera data collected by the system itself</li>
+        <li>SMS / app alerts to managers; multiple cameras per site</li>
+        <li>Person tracking to measure real service speed automatically</li>
+      </ul>
+    </section>
+  </div>
+
+  <footer>AI Queue Collapse Predictor &middot; Live demo running at this stand</footer>
+</div>
+</body>
+</html>
