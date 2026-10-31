@@ -11,8 +11,8 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 
 from . import database as db
-from .config import (HIGH_WAIT_MIN, HISTORY_WINDOW_MIN, MEDIUM_WAIT_MIN, METRICS_PATH, MODEL_PATH,
-                    RESULT_DIR, TARGET_WAIT_MIN, UPLOAD_DIR)
+from .config import HISTORY_WINDOW_MIN, RESULT_DIR, UPLOAD_DIR, metrics_path, model_path
+from .domains import DOMAINS
 from .predictor import QueuePredictor
 from .simulate import QueueSimulator
 
@@ -23,10 +23,17 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
 
 db.init_db()
-if not MODEL_PATH.exists():
-    from .train import train
-    train()
-predictor = QueuePredictor()
+predictors = {}
+for _domain in DOMAINS.values():
+    if not model_path(_domain.key).exists():
+        from .train import train
+        train(_domain)
+    predictors[_domain.key] = QueuePredictor(_domain)
+
+
+def load_metrics():
+    return {key: json.loads(metrics_path(key).read_text())
+            for key in DOMAINS if metrics_path(key).exists()}
 
 _detector = None
 _detector_lock = threading.Lock()
@@ -47,8 +54,10 @@ def predict_and_store(location):
     latest = db.latest_timestamp(location["id"])
     if latest is None:
         return None
-    observations = db.observations_since(location["id"], latest - timedelta(minutes=30))
-    result = predictor.predict(observations, location["counters"], location["service_time_sec"])
+    domain = DOMAINS[location["domain"]]
+    observations = db.observations_since(location["id"], latest - timedelta(minutes=domain.history_min))
+    result = predictors[location["domain"]].predict(
+        observations, location["counters"], location["service_time_sec"], what_if=False)
     db.add_prediction(location["id"], result)
     return result
 
@@ -62,9 +71,12 @@ def location_or_404(location_id):
 
 @app.get("/")
 def index():
-    metrics = json.loads(METRICS_PATH.read_text()) if METRICS_PATH.exists() else {}
-    return render_template("index.html", metrics=metrics,
-                           medium_wait=MEDIUM_WAIT_MIN, high_wait=HIGH_WAIT_MIN)
+    return render_template("index.html", domains=list(DOMAINS.values()), metrics=load_metrics())
+
+
+@app.get("/api/domains")
+def domains():
+    return jsonify([d.public() for d in DOMAINS.values()])
 
 
 @app.get("/api/locations")
@@ -83,8 +95,11 @@ def update_settings(location_id):
         service_time = float(data["service_time_sec"])
     except (KeyError, TypeError, ValueError):
         return jsonify(error="counters and service_time_sec must be numbers"), 400
-    if not (1 <= counters <= 20 and 5 <= service_time <= 900):
-        return jsonify(error="Counters must be 1-20 and service time 5-900 seconds"), 400
+    domain = DOMAINS[location["domain"]]
+    low, high = domain.service_sec_limits
+    if not (1 <= counters <= domain.max_servers and low <= service_time <= high):
+        return jsonify(error=f"{domain.server.capitalize()}s must be 1-{domain.max_servers} and "
+                             f"service time {low:g}-{high:g} seconds"), 400
     db.update_location(location_id, counters, service_time)
     return jsonify(db.get_location(location_id))
 
@@ -96,12 +111,15 @@ def status(location_id):
         return error
     latest = db.latest_timestamp(location_id)
     if latest is None:
-        return jsonify(location=location, prediction=None, history=[], past_predictions=[])
+        return jsonify(location=location, domain=DOMAINS[location["domain"]].public(),
+                       prediction=None, history=[], past_predictions=[])
 
-    since = latest - timedelta(minutes=HISTORY_WINDOW_MIN)
+    since = latest - timedelta(minutes=max(HISTORY_WINDOW_MIN, DOMAINS[location["domain"]].history_min))
     history = db.observations_since(location_id, since)
-    observations = history[history["ts"] >= latest - timedelta(minutes=30)]
-    prediction = predictor.predict(observations, location["counters"], location["service_time_sec"])
+    domain = DOMAINS[location["domain"]]
+    observations = history[history["ts"] >= latest - timedelta(minutes=domain.history_min)]
+    prediction = predictors[location["domain"]].predict(
+        observations, location["counters"], location["service_time_sec"])
     past = db.predictions_since(location_id, since - timedelta(minutes=15))
 
     def minutes_from_now(ts):
@@ -109,6 +127,7 @@ def status(location_id):
 
     return jsonify(
         location=location,
+        domain=DOMAINS[location["domain"]].public(),
         prediction=prediction,
         history=[{"t": minutes_from_now(r.ts), "count": int(r.count), "source": r.source}
                  for r in history.itertuples()],
@@ -127,6 +146,8 @@ def upload(location_id):
     location, error = location_or_404(location_id)
     if error:
         return error
+    if not DOMAINS[location["domain"]].camera:
+        return jsonify(error="Camera footage is only used for physical queues"), 400
     file = request.files.get("file")
     if file is None or not file.filename:
         return jsonify(error="No file uploaded"), 400
@@ -203,9 +224,7 @@ def preview_roi(location_id):
 
 @app.get("/poster")
 def poster():
-    metrics = json.loads(METRICS_PATH.read_text()) if METRICS_PATH.exists() else {}
-    return render_template("poster.html", metrics=metrics, medium_wait=MEDIUM_WAIT_MIN,
-                           high_wait=HIGH_WAIT_MIN, target_wait=TARGET_WAIT_MIN)
+    return render_template("poster.html", domains=list(DOMAINS.values()), metrics=load_metrics())
 
 
 @app.post("/api/demo/<int:location_id>/tick")
@@ -220,12 +239,15 @@ def demo_tick(location_id):
     state = _demo.get(location_id)
     if state is None:
         db.clear_location_data(location_id)
-        # Start just before the lunch rush so the build-up is visible within a minute.
-        clock = datetime.now().replace(hour=12, minute=5, second=0, microsecond=0)
-        sim = QueueSimulator(np.random.default_rng(), weekday=clock.weekday(), queue=4)
+        # Start just before the rush so the build-up is visible within a minute.
+        domain = DOMAINS[location["domain"]]
+        clock = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(minutes=domain.demo_start)
+        sim = QueueSimulator(np.random.default_rng(), weekday=min(clock.weekday(), 4),
+                             queue=domain.demo_queue, domain=domain)
         warmup = []
-        for _ in range(15):  # give the model some history to start with
+        for _ in range(max(15, max(domain.lags))):  # give the model some history to start with
             sim.counters = location["counters"]
+            sim.service_time_sec = location["service_time_sec"]
             warmup.append((clock, sim.step(clock.hour * 60 + clock.minute)))
             clock += timedelta(minutes=1)
         db.add_observations(location_id, warmup, "simulation")
@@ -238,6 +260,21 @@ def demo_tick(location_id):
     db.add_observations(location_id, [(clock, count)], "simulation")
     state["clock"] = clock + timedelta(minutes=1)
     return jsonify(count=count, time=clock.strftime("%H:%M"), prediction=predict_and_store(location))
+
+
+@app.post("/api/demo/<int:location_id>/surge")
+def demo_surge(location_id):
+    """Inject a sudden demand surge (class break, ambulance wave, flash sale, outage) into the live feed."""
+    location, error = location_or_404(location_id)
+    if error:
+        return error
+    state = _demo.get(location_id)
+    if not location["is_demo"] or state is None:
+        return jsonify(error="Start the simulated live feed first"), 400
+    burst = DOMAINS[location["domain"]].demand.burst_rate
+    state["sim"]._burst_left = 4
+    state["sim"]._burst_rate = float(burst[1])
+    return jsonify(ok=True)
 
 
 @app.post("/api/demo/<int:location_id>/reset")

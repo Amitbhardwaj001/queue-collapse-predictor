@@ -148,3 +148,68 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 @media (max-width: 600px) {
   header, main { padding-left: 16px; padding-right: 16px; }
 }
+
+/* ---------- domain tabs ---------- */
+.domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 28px 0;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+.domain-tab {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-bottom: 4px solid transparent;
+  border-radius: 12px;
+  padding: 10px 16px;
+  text-align: left;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.domain-tab small { color: var(--muted); font-weight: 400; font-size: .75rem; }
+.domain-tab.active { border-bottom-color: var(--accent); background: #eef3ff; }
+
+/* ---------- collapse radar ---------- */
+.radar {
+  margin-top: 16px;
+  padding: 16px 20px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  border-left: 8px solid var(--low);
+  background: var(--panel);
+}
+.radar.AT_RISK { border-left-color: var(--medium); background: #fffaf0; }
+.radar.IMMINENT, .radar.COLLAPSED { border-left-color: var(--high); background: #fff5f5; }
+.radar-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.radar-head h2 { margin: 0; font-size: 1.05rem; }
+.pill { padding: 4px 14px; border-radius: 999px; background: var(--low); color: #fff; font-weight: 700; font-size: .85rem; }
+.radar.AT_RISK .pill { background: var(--medium); }
+.radar.IMMINENT .pill, .radar.COLLAPSED .pill { background: var(--high); }
+.radar.IMMINENT .pill { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .55; } }
+.radar-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
+.radar-metrics > div { display: flex; flex-direction: column; gap: 2px; }
+.radar-metrics .label { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; }
+.radar-metrics .big { font-size: 1.9rem; font-weight: 700; }
+.radar-metrics .hint { color: var(--muted); font-size: .8rem; }
+
+/* ---------- what-if table ---------- */
+.whatif { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.whatif th, .whatif td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.whatif tr.current td { background: #eef3ff; }
+.whatif td:nth-child(2) { width: 32%; }
+.bar { height: 10px; background: #edf0f6; border-radius: 6px; overflow: hidden; }
+.bar span { display: block; height: 100%; border-radius: 6px; }
+.bar span.LOW { background: var(--low); }
+.bar span.MEDIUM { background: var(--medium); }
+.bar span.HIGH { background: var(--high); }
+.tag { font-size: .7rem; padding: 1px 7px; border-radius: 999px; background: #dbe4ff; color: #1e40af; margin-left: 4px; }
+.tag.safe { background: #d6f5e0; color: #166534; }
+button.small-btn { padding: 3px 10px; font-size: .8rem; }
+button.warn { background: var(--high); }
+.metrics tr.current td { background: #eef3ff; }

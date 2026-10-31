@@ -11,7 +11,7 @@
 <header>
   <div>
     <h1>AI Queue Collapse Predictor</h1>
-    <p class="sub">YOLOv8 people counting &rarr; XGBoost forecasting &rarr; early congestion warning</p>
+    <p class="sub" id="tagline">One collapse-prediction engine for every system that has arrivals, capacity and a backlog</p>
   </div>
   <div class="loc">
     <a class="poster-link" href="/poster" target="_blank">Project poster</a>
@@ -20,9 +20,15 @@
   </div>
 </header>
 
+<nav class="domains" id="domains" aria-label="Application domain">
+  {% for d in domains %}
+  <button type="button" class="domain-tab" data-domain="{{ d.key }}">{{ d.name }}<small>{{ d.tagline }}</small></button>
+  {% endfor %}
+</nav>
+
 <main>
   <section class="cards">
-    <div class="card"><span class="label">Current queue</span><span class="value" id="current">–</span><span class="hint" id="asof">No data yet</span></div>
+    <div class="card"><span class="label">Current <span class="item">backlog</span></span><span class="value" id="current">–</span><span class="hint" id="asof">No data yet</span></div>
     <div class="card"><span class="label">Predicted in <span id="horizon">10</span> min</span><span class="value" id="predicted">–</span><span class="hint" id="trend">&nbsp;</span></div>
     <div class="card"><span class="label">Estimated waiting time</span><span class="value" id="wait">–</span><span class="hint" id="wait-future">&nbsp;</span></div>
     <div class="card risk" id="risk-card"><span class="label">Congestion risk</span><span class="value" id="risk">–</span><span class="hint" id="probability">&nbsp;</span></div>
@@ -30,16 +36,37 @@
 
   <section class="advice" id="advice" hidden></section>
 
+  <section class="radar" id="radar" hidden>
+    <div class="radar-head">
+      <h2>Collapse Radar</h2>
+      <span class="pill" id="radar-status">SAFE</span>
+    </div>
+    <div class="radar-metrics">
+      <div><span class="label">Time to collapse</span><span class="big" id="radar-ttc">–</span><span class="hint" id="radar-ttc-range">&nbsp;</span></div>
+      <div><span class="label">Collapse probability</span><span class="big" id="radar-prob">–</span><span class="hint" id="radar-prob-hint">within the next <span id="radar-horizon">15</span> min</span></div>
+      <div><span class="label">Peak load</span><span class="big" id="radar-load">–</span><span class="hint">expected demand &divide; capacity (above 100% the backlog grows)</span></div>
+      <div><span class="label">Safe staffing</span><span class="big" id="radar-safe">–</span><span class="hint" id="radar-safe-hint">fewest <span class="server">servers</span> with &lt;10% collapse risk</span></div>
+    </div>
+  </section>
+
   <section class="grid">
     <div class="panel wide">
       <div class="panel-head">
-        <h2>Queue history &amp; forecast</h2>
-        <span class="muted">x-axis: minutes relative to the latest reading</span>
+        <h2>Backlog history, forecast &amp; uncertainty</h2>
+        <span class="muted">x-axis: minutes relative to the latest reading &middot; shaded band = 80% range of 500 simulated futures</span>
       </div>
       <div class="chart-box"><canvas id="chart"></canvas></div>
     </div>
 
-    <div class="panel">
+    <div class="panel wide" id="whatif-panel" hidden>
+      <div class="panel-head">
+        <h2>What-if staffing simulator</h2>
+        <span class="muted" id="whatif-help">Chance of collapse if you run a different number of servers</span>
+      </div>
+      <table class="whatif" id="whatif"></table>
+    </div>
+
+    <div class="panel" id="upload-panel">
       <h2>Analyse queue footage</h2>
       <form id="upload-form">
         <label class="drop" id="drop">
@@ -52,7 +79,7 @@
       <img id="result-img" alt="Detected people" hidden>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="roi-panel">
       <h2>Queue area</h2>
       <p class="muted" id="roi-help">Analyse an image (or start the camera) first, then drag on the frame to mark where the queue stands. Only people whose feet are inside the area are counted.</p>
       <div class="roi-box" id="roi-box" hidden>
@@ -70,14 +97,16 @@
       <h2>Live sources</h2>
       <div class="live-block" id="demo-block">
         <h3>Simulated live feed</h3>
-        <p class="muted">Replays a lunch-time rush, one simulated minute per tick. Change the counters below while it runs to see the forecast react.</p>
+        <p class="muted" id="demo-help">Replays a rush, one simulated minute per tick. Change the servers below while it runs to see the forecast react.</p>
         <div class="row">
           <button id="demo-start">Start</button>
           <button id="demo-stop" class="secondary" disabled>Stop</button>
+          <button id="demo-surge" class="warn" disabled>Inject surge</button>
           <button id="demo-reset" class="secondary">Reset</button>
         </div>
+        <p class="status" id="demo-status"></p>
       </div>
-      <div class="live-block">
+      <div class="live-block" id="camera-block">
         <h3>Webcam</h3>
         <p class="muted">Counts people from your camera every <span id="cam-interval">10</span> seconds.</p>
         <div class="row">
@@ -91,11 +120,11 @@
     <div class="panel">
       <h2>Service settings</h2>
       <form id="settings-form" class="settings">
-        <label>Open counters <input type="number" id="counters" min="1" max="20" required></label>
-        <label>Seconds to serve one person <input type="number" id="service" min="5" max="900" step="1" required></label>
+        <label>Open <span class="server">servers</span> <input type="number" id="counters" min="1" max="20" required></label>
+        <label>Seconds to serve one <span class="item-one">item</span> <input type="number" id="service" min="0.1" step="any" required></label>
         <button type="submit">Save</button>
       </form>
-      <p class="muted small">Risk thresholds: MEDIUM at {{ medium_wait }}+ min wait, HIGH at {{ high_wait }}+ min wait or a high predicted probability of critical congestion.</p>
+      <p class="muted small" id="thresholds"></p>
       <p class="status" id="settings-status"></p>
     </div>
 
@@ -106,21 +135,17 @@
 
     <div class="panel">
       <h2>Model accuracy</h2>
-      {% if metrics %}
-      <table class="metrics">
-        <tr><th>Horizon</th><th>R²</th><th>MAE (all day)</th><th>MAE (busy)</th><th>Naive (busy)</th></tr>
-        {% for h, m in metrics.horizons.items() %}
-        <tr><td>+{{ h }} min</td><td>{{ m.r2 }}</td><td>{{ m.mae }}</td><td><strong>{{ m.busy_mae }}</strong></td><td>{{ m.busy_baseline_mae }}</td></tr>
-        {% endfor %}
-      </table>
-      <p class="muted small">Critical-congestion classifier AUC: {{ metrics.critical.auc }}. MAE = average error in people. "Busy" = {{ metrics.busy_queue }}+ people waiting. "Naive" assumes the queue stays the same.</p>
-      {% else %}
-      <p class="muted">Run <code>python -m queue_predictor.train</code> to see metrics.</p>
-      {% endif %}
+      <div id="metrics"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Early-warning study</h2>
+      <div id="study"></div>
     </div>
   </section>
 </main>
 
+<script>window.METRICS = {{ metrics|tojson }};</script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

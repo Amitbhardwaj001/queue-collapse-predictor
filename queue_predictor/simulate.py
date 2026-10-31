@@ -1,69 +1,67 @@
-"""Synthetic canteen queue simulator.
+"""Synthetic demand simulator for every domain.
 
-There is no public minute-by-minute queue dataset for a college canteen, so the
-models are first trained on simulated days. The arrival pattern (breakfast,
-lunch and evening rushes, sudden class-break bursts, quieter weekends) and the
-service process (open counters x people served per minute) are modelled on a
-real canteen. Once the camera has logged a few weeks of real counts, retrain
-on those instead (see README).
+There is no public minute-by-minute backlog dataset for a canteen, a hospital
+OPD, an API server or a call centre, so the models are first trained on
+simulated days. The arrival pattern (rush hours, sudden bursts, quieter
+weekends) and the service process (open servers x items served per minute) are
+described per domain in domains.py. Once a deployment has logged a few weeks of
+real counts, retrain on those instead (see README).
 """
 from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
 
-from .config import SIM_DAY_END, SIM_DAY_START, SIM_DAYS
-
-# (centre minute of day, spread in minutes, extra arrivals per minute)
-PEAKS = [
-    (8 * 60 + 45, 25, 2.0),
-    (13 * 60, 35, 4.5),
-    (16 * 60 + 30, 30, 2.5),
-]
-BURST_PROBABILITY = 4 / 780    # about four class-break rushes per day
-BALK_START = 30                # beyond this length some people give up and leave
+from .domains import QUEUE
 
 
-def arrival_rate(minute_of_day, weekday, day_factor=1.0):
+def arrival_rate(minute_of_day, weekday, day_factor=1.0, domain=QUEUE):
     """Expected new arrivals per minute at a given time of day."""
-    rate = 0.35
-    for centre, spread, amplitude in PEAKS:
+    demand = domain.demand
+    rate = demand.base_rate
+    for centre, spread, amplitude in demand.peaks:
         rate += amplitude * np.exp(-0.5 * ((minute_of_day - centre) / spread) ** 2)
     if weekday >= 5:
-        rate *= 0.45
+        rate *= demand.weekend_factor
     return rate * day_factor
 
 
 class QueueSimulator:
-    """Moves a single queue forward one minute at a time."""
+    """Moves one backlog forward a minute at a time."""
 
-    def __init__(self, rng, weekday, counters=2, service_time_sec=45, day_factor=1.0, queue=0):
+    def __init__(self, rng, weekday, counters=2, service_time_sec=45, day_factor=1.0, queue=0,
+                 domain=QUEUE):
         self.rng = rng
         self.weekday = weekday
         self.counters = counters
         self.service_time_sec = service_time_sec
         self.day_factor = day_factor
         self.queue = queue
+        self.domain = domain
+        demand = domain.demand
+        day_minutes = demand.day_end - demand.day_start
+        self._burst_probability = demand.bursts_per_day / day_minutes
         self._burst_left = 0
         self._burst_rate = 0.0
 
     @property
     def service_rate(self):
-        """People one counter serves per minute."""
+        """Items one server handles per minute."""
         return 60.0 / self.service_time_sec
 
     def step(self, minute_of_day):
-        rate = arrival_rate(minute_of_day, self.weekday, self.day_factor)
-        if self._burst_left == 0 and self.rng.random() < BURST_PROBABILITY:
-            self._burst_left = int(self.rng.integers(2, 5))
-            self._burst_rate = float(self.rng.uniform(3, 7))
+        demand = self.domain.demand
+        rate = arrival_rate(minute_of_day, self.weekday, self.day_factor, self.domain)
+        if self._burst_left == 0 and self.rng.random() < self._burst_probability:
+            self._burst_left = int(self.rng.integers(demand.burst_len[0], demand.burst_len[1] + 1))
+            self._burst_rate = float(self.rng.uniform(*demand.burst_rate))
         if self._burst_left > 0:
             rate += self._burst_rate
             self._burst_left -= 1
 
         arrivals = int(self.rng.poisson(rate))
-        if self.queue > BALK_START:
-            stay = max(0.4, 1 - (self.queue - BALK_START) / 150)
+        if self.queue > demand.balk_start:      # long backlog: some arrivals give up or time out
+            stay = max(0.4, 1 - (self.queue - demand.balk_start) / (5 * demand.balk_start))
             arrivals = int(self.rng.binomial(arrivals, stay))
         self.queue += arrivals
 
@@ -72,17 +70,20 @@ class QueueSimulator:
         return self.queue
 
 
-def staffed_counters(rng, minute_of_day, weekday):
-    """Counters a manager would open for the coming hour, with some under/over-staffing."""
-    expected = max(arrival_rate(minute_of_day + m, weekday) for m in (0, 15, 30, 45, 60))
-    counters = int(np.ceil(expected / 1.3))
+def staffed_counters(rng, minute_of_day, weekday, domain=QUEUE):
+    """Servers a manager would run for the coming hour, with some under/over-staffing."""
+    demand = domain.demand
+    expected = max(arrival_rate(minute_of_day + m, weekday, domain=domain) for m in (0, 15, 30, 45, 60))
+    counters = int(np.ceil(expected / demand.staff_capacity))
     if rng.random() < 0.35:
         counters += int(rng.choice([-1, 1]))
-    return int(np.clip(counters, 1, 4))
+    return int(np.clip(counters, *demand.servers))
 
 
-def generate_history(days=SIM_DAYS, seed=42):
+def generate_history(days=None, seed=42, domain=QUEUE):
     """Return one row per simulated minute: ts, queue, counters, service_rate."""
+    days = days or domain.sim_days
+    demand = domain.demand
     rng = np.random.default_rng(seed)
     first_day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days)
     rows = []
@@ -91,18 +92,21 @@ def generate_history(days=SIM_DAYS, seed=42):
         sim = QueueSimulator(
             rng,
             weekday=day.weekday(),
-            service_time_sec=float(rng.uniform(40, 75)),
+            service_time_sec=float(rng.uniform(*demand.service_sec)),
             day_factor=float(rng.lognormal(0, 0.15)),
+            domain=domain,
         )
-        for minute in range(SIM_DAY_START, SIM_DAY_END):
-            if minute % 60 == 0 or minute == SIM_DAY_START:
-                sim.counters = staffed_counters(rng, minute, day.weekday())
+        for minute in range(demand.day_start, demand.day_end):
+            if minute % 60 == 0 or minute == demand.day_start:
+                sim.counters = staffed_counters(rng, minute, day.weekday(), domain)
             queue = sim.step(minute)
             rows.append((day + timedelta(minutes=minute), queue, sim.counters, sim.service_rate))
     return pd.DataFrame(rows, columns=["ts", "queue", "counters", "service_rate"])
 
 
 if __name__ == "__main__":
-    df = generate_history(days=7)
-    print(df.describe())
-    print(df.groupby(df.ts.dt.hour)["queue"].mean().round(1))
+    from .domains import DOMAINS
+    for dom in DOMAINS.values():
+        df = generate_history(days=7, domain=dom)
+        print(dom.name)
+        print(df.groupby(df.ts.dt.hour)["queue"].mean().round(1).to_string())

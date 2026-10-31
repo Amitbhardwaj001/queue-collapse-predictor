@@ -17,3 +17,6 @@ models/*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local logs
+*.log

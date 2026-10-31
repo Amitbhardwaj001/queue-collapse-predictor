@@ -5,7 +5,8 @@ from contextlib import contextmanager
 
 import pandas as pd
 
-from .config import DB_PATH, DEFAULT_COUNTERS, DEFAULT_SERVICE_TIME_SEC
+from .config import DB_PATH
+from .domains import DOMAINS
 
 TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -16,7 +17,8 @@ CREATE TABLE IF NOT EXISTS locations (
     counters INTEGER NOT NULL,
     service_time_sec REAL NOT NULL,
     is_demo INTEGER NOT NULL DEFAULT 0,
-    roi TEXT
+    roi TEXT,
+    domain TEXT NOT NULL DEFAULT 'queue'
 );
 CREATE TABLE IF NOT EXISTS observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,11 +59,15 @@ def init_db():
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(locations)")}
         if "roi" not in columns:  # databases created before the queue-area feature
             conn.execute("ALTER TABLE locations ADD COLUMN roi TEXT")
-        for name, demo in (("Main Canteen", 0), ("Demo Canteen (simulated live feed)", 1)):
-            conn.execute(
-                "INSERT OR IGNORE INTO locations (name, counters, service_time_sec, is_demo) VALUES (?, ?, ?, ?)",
-                (name, DEFAULT_COUNTERS, DEFAULT_SERVICE_TIME_SEC, demo),
-            )
+        if "domain" not in columns:  # databases created before the multi-domain platform
+            conn.execute("ALTER TABLE locations ADD COLUMN domain TEXT NOT NULL DEFAULT 'queue'")
+        for domain in DOMAINS.values():
+            for name, demo in domain.locations:
+                conn.execute(
+                    "INSERT OR IGNORE INTO locations (name, counters, service_time_sec, is_demo, domain) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (name, domain.default_servers, domain.default_service_sec, int(demo), domain.key),
+                )
 
 
 def _location(row):

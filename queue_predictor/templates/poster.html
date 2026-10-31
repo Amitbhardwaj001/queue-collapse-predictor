@@ -43,6 +43,10 @@
     .kpi span { display: block; color: var(--muted); font-size: 13.5px; }
     .risk { display: inline-block; padding: 2px 10px; border-radius: 999px; color: #fff; font-weight: 700; font-size: 13px; }
     .risk.LOW { background: var(--low); } .risk.MEDIUM { background: var(--medium); } .risk.HIGH { background: var(--high); }
+    .domains { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .domains div { border: 2px solid var(--accent); border-radius: 12px; padding: 10px 12px; background: #f8fafc; font-size: 14px; }
+    .domains b { display: block; font-size: 16px; margin-bottom: 3px; }
+    td.hl, tr.hl td { background: #eef3ff; font-weight: 600; }
     .tech { display: flex; flex-wrap: wrap; gap: 8px; }
     .tech span { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 5px 12px; font-size: 14px; }
     footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; text-align: center; }
@@ -52,7 +56,7 @@
       .print-tip { display: none; }
     }
     @media (max-width: 800px) {
-      .grid, .example { grid-template-columns: 1fr; }
+      .grid, .example, .domains { grid-template-columns: 1fr; }
       header h1 { font-size: 32px; }
       .arrow { display: none; }
     }
@@ -64,96 +68,105 @@
 <div class="sheet">
   <header>
     <h1>AI Queue Collapse Predictor</h1>
-    <p class="tag">Predicting overcrowded queues <em>before</em> they happen &mdash; with computer vision and machine learning</p>
+    <p class="tag">One engine that predicts <em>when</em> a system will collapse under demand &mdash; and how many servers prevent it</p>
     <p class="team">Team: ____________________ &nbsp;|&nbsp; Guide: ____________________ &nbsp;|&nbsp; Department: ____________________</p>
   </header>
 
   <div class="grid">
     <section class="box problem">
       <h2>The problem</h2>
-      <p>Canteens, hospitals, banks and ticket counters only react <b>after</b> a queue has already become too long.
-        By the time staff notice, people are waiting 15&ndash;20 minutes, some give up and leave, and opening another
-        counter takes time.</p>
-      <p>CCTV cameras can show how long the queue is <em>now</em>, but not how long it <em>will</em> be.</p>
+      <p>Canteens, hospitals, web servers and call centres all fail the same way: demand briefly exceeds capacity,
+        a backlog builds, waiting explodes and people give up. Managers notice only <b>after</b> it has happened.</p>
+      <p>Monitoring shows the backlog <em>now</em>. Nobody tells them <em>when it will collapse</em> or <em>how many servers prevent it</em>.</p>
     </section>
 
     <section class="box solution">
       <h2>Our solution</h2>
-      <p>A system that watches the queue through a camera, counts people automatically, learns how the queue grows,
-        and predicts the queue size, waiting time and risk of collapse <b>10&ndash;15 minutes ahead</b>.</p>
-      <p>It moves queue management from <b>reactive</b> to <b>proactive</b>: it recommends opening a counter
-        <em>before</em> congestion happens.</p>
+      <p>A general <b>collapse-prediction platform</b>. Anything with arrivals, a service capacity and a backlog plugs in as a
+        <em>domain</em>. For each one the system forecasts the backlog, runs the <b>Collapse Radar</b> and answers three questions:</p>
+      <ul><li><b>When</b> will it collapse? (time-to-collapse with a range)</li>
+          <li><b>How likely</b> is it? (probability from 500 simulated futures)</li>
+          <li><b>What should we do?</b> (what-if staffing simulator)</li></ul>
+    </section>
+
+    <section class="full">
+      <h2>One engine, four applications</h2>
+      <div class="domains">
+        {% for d in domains %}
+        <div><b>{{ d.name }}</b>{{ d.tagline }}<br><small>{{ d.item }} wait for a {{ d.server }} &middot; critical wait {{ d.high_wait }} min</small></div>
+        {% endfor %}
+      </div>
     </section>
 
     <section class="full">
       <h2>How it works</h2>
       <div class="pipeline">
-        <div class="step"><b>1. Camera</b>Image, video or live webcam</div>
+        <div class="step"><b>1. Sense</b>Camera + YOLOv8 people counting, or a metric feed (queue depth)</div>
         <div class="arrow">&rarr;</div>
-        <div class="step"><b>2. YOLOv8</b>Detects every person in the frame</div>
+        <div class="step"><b>2. History</b>Backlog stored per minute</div>
         <div class="arrow">&rarr;</div>
-        <div class="step"><b>3. Queue area</b>Counts only people standing in the queue zone</div>
+        <div class="step"><b>3. XGBoost</b>Forecasts the backlog and critical-wait probability</div>
         <div class="arrow">&rarr;</div>
-        <div class="step"><b>4. History</b>Counts stored per minute in a database</div>
+        <div class="step"><b>4. Collapse Radar</b>Monte Carlo queue simulation of 500 futures per staffing option</div>
         <div class="arrow">&rarr;</div>
-        <div class="step"><b>5. XGBoost</b>Forecasts queue +5/+10/+15 min and congestion risk</div>
-        <div class="arrow">&rarr;</div>
-        <div class="step"><b>6. Dashboard</b>Waiting time, risk level, early warning, advice</div>
+        <div class="step"><b>5. Decision</b>Time-to-collapse, risk, safe staffing, advice</div>
       </div>
     </section>
 
     <section class="box">
       <h2>What the model looks at</h2>
       <ul>
-        <li>Current queue length</li>
-        <li>Queue 1, 2, 3, 5 and 10 minutes ago</li>
-        <li>How fast the queue is growing or shrinking, and how unsteady it is</li>
-        <li>Time of day (rush hours) and day of the week</li>
-        <li>Number of open counters and service speed (people served per minute)</li>
+        <li>Current backlog and the backlog 1, 2, 3, 5 and 10 minutes ago</li>
+        <li>Growth, volatility, time of day and weekday</li>
+        <li>Open servers and service speed (capacity)</li>
       </ul>
-      <p><b>Waiting time</b> = people in queue &divide; (counters &times; people served per counter per minute)</p>
+      <p><b>Wait</b> = backlog &divide; (servers &times; items served per server per minute)</p>
     </section>
 
     <section class="box">
-      <h2>Risk levels</h2>
-      <table>
-        <tr><th>Level</th><th>When</th></tr>
-        <tr><td><span class="risk LOW">LOW</span></td><td>Expected wait under {{ medium_wait }} min</td></tr>
-        <tr><td><span class="risk MEDIUM">MEDIUM</span></td><td>Wait {{ medium_wait }}+ min, or 30%+ chance of critical congestion</td></tr>
-        <tr><td><span class="risk HIGH">HIGH</span></td><td>Wait {{ high_wait }}+ min, or 60%+ chance of critical congestion</td></tr>
-      </table>
-      <p>The system also calculates how many counters are needed to keep the wait under {{ target_wait }} minutes and
-        recommends opening extra ones.</p>
+      <h2>Collapse Radar</h2>
+      <ul>
+        <li>Turns the forecast into an implied arrival rate per minute</li>
+        <li>Replays it with random arrivals and service for every staffing option</li>
+        <li>A path <em>collapses</em> when the wait reaches the critical level</li>
+        <li>Reads off probability, time to collapse, uncertainty band and the smallest safe number of servers</li>
+      </ul>
     </section>
 
     <section class="box full">
-      <h2>Example prediction</h2>
+      <h2>Example: Collapse Radar on a lunch rush</h2>
       <div class="example">
-        <div><span class="num">20</span>people now</div>
-        <div><span class="num">45</span>expected in 10 min</div>
-        <div><span class="num">15 min</span>expected wait</div>
-        <div class="high"><span class="num">HIGH</span>congestion risk</div>
+        <div><span class="num">20</span>people now, 2 counters</div>
+        <div><span class="num">~6 min</span>to collapse (80%: 3&ndash;10)</div>
+        <div><span class="num">88%</span>collapse probability</div>
+        <div class="high"><span class="num">4</span>counters needed to stay safe</div>
       </div>
-      <div class="advice">Recommendation: "Open 1 more counter now &ndash; the queue is expected to reach 45 people in 10 minutes."</div>
+      <div class="advice">Recommendation: "Add 2 more counters now &ndash; people are expected to reach 45 in 10 minutes. Collapse expected in about 6 min."</div>
     </section>
 
     <section class="box full">
-      <h2>Results</h2>
+      <h2>Results (held-out days the models never saw)</h2>
       {% if metrics %}
-      <div class="kpis">
-        <div class="kpi"><span>Critical-congestion detection (AUC)</span><b class="big">{{ metrics.critical.auc }}</b></div>
-        <div class="kpi"><span>Variance explained, 10-min forecast (R²)</span><b class="big">{{ metrics.horizons['10'].r2 }}</b></div>
-        <div class="kpi"><span>Avg. error at rush hour, 10 min ahead</span><b class="big">&plusmn;{{ metrics.horizons['10'].busy_mae }}</b> people</div>
-      </div>
       <table>
-        <tr><th>Forecast horizon</th><th>R²</th><th>Average error (all day)</th><th>Average error (busy, {{ metrics.busy_queue }}+ people)</th><th>Naive guess "no change" (busy)</th></tr>
-        {% for h, m in metrics.horizons.items() %}
-        <tr><td>+{{ h }} minutes</td><td>{{ m.r2 }}</td><td>{{ m.mae }} people</td><td><b>{{ m.busy_mae }} people</b></td><td>{{ m.busy_baseline_mae }} people</td></tr>
-        {% endfor %}
+        <tr><th>Domain</th><th>Critical-congestion AUC (before collapse starts)</th><th>Main-horizon R&sup2;</th><th>Busy-period error vs naive guess</th></tr>
+        {% for d in domains %}{% set m = metrics.get(d.key) %}{% if m %}
+        {% set h = m.horizons[d.main_horizon|string] %}
+        <tr><td>{{ d.name }}</td><td>{{ m.critical.auc }} ({{ m.critical.auc_before_collapse }})</td><td>{{ h.r2 }} (+{{ d.main_horizon }} min)</td>
+            <td><b>{{ h.busy_mae }}</b> vs {{ h.busy_baseline_mae }} {{ d.item }}</td></tr>
+        {% endif %}{% endfor %}
       </table>
-      <p>Trained on {{ "{:,}".format(metrics.train_rows) }} minutes and tested on {{ "{:,}".format(metrics.test_rows) }} unseen minutes
-        ({{ metrics.days }} simulated canteen days with breakfast, lunch and evening rushes, class-break surges,
-        weekends, under-staffing and people leaving long queues). Tested only on later days the model never saw.</p>
+      <h2 style="margin-top:16px">Early warning vs a normal alarm</h2>
+      <table>
+        <tr><th>Domain</th><th>Collapses</th><th>Reactive alarm warns</th><th>Full system warns early</th><th>Mean warning time</th><th>False alarms / day</th></tr>
+        {% for d in domains %}{% set m = metrics.get(d.key) %}{% if m %}
+        {% set r = m.early_warning.policies.system %}
+        <tr><td>{{ d.name }}</td><td>{{ m.early_warning.policies.reactive.events }}</td><td>0 min ahead</td>
+            <td class="hl">{{ ((r.early_rate or 0) * 100)|round|int }}%</td><td class="hl">{{ r.mean_lead_min }} min</td><td>{{ r.false_alarms_per_day }}</td></tr>
+        {% endif %}{% endfor %}
+      </table>
+      <p>Trained and tested on simulated days per domain (rush hours, sudden bursts, weekends, under-staffing and people giving up).
+        Sudden bursts cannot be seen in advance, so not every collapse can be warned about early. Retraining on real
+        logged data uses the same pipeline.</p>
       {% else %}
       <p>Run <code>python -m queue_predictor.train</code> to fill in the results.</p>
       {% endif %}
@@ -163,18 +176,17 @@
       <h2>Technologies</h2>
       <div class="tech">
         <span>Python</span><span>OpenCV</span><span>YOLOv8 (Ultralytics)</span><span>XGBoost</span>
-        <span>scikit-learn</span><span>pandas</span><span>Flask</span><span>SQLite</span>
-        <span>HTML / CSS / JavaScript</span><span>Chart.js</span>
+        <span>Monte Carlo simulation</span><span>scikit-learn</span><span>pandas</span><span>Flask</span><span>SQLite</span>
+        <span>JavaScript</span><span>Chart.js</span>
       </div>
     </section>
 
     <section class="box">
       <h2>Applications &amp; future work</h2>
       <ul>
-        <li>College canteens, hospital OPDs, banks, railway &amp; ticket counters</li>
-        <li>Retrain on real camera data collected by the system itself</li>
-        <li>SMS / app alerts to managers; multiple cameras per site</li>
-        <li>Person tracking to measure real service speed automatically</li>
+        <li>Canteens, banks, hospitals, web services, call centres, parking, ticketing</li>
+        <li>Live metric connectors (Prometheus, helpdesk APIs) and real-data retraining</li>
+        <li>Person tracking to measure real service speed; SMS / app alerts</li>
       </ul>
     </section>
   </div>

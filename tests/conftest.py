@@ -18,9 +18,9 @@ if _weights.exists():
     (_TMP / "models").mkdir(parents=True, exist_ok=True)
     shutil.copy(_weights, _TMP / "models" / "yolov8n.pt")
 
-from queue_predictor.train import train  # noqa: E402  (must come after the env vars)
+from queue_predictor.train import train_all  # noqa: E402  (must come after the env vars)
 
-train(days=20, verbose=False)
+train_all(days=20, verbose=False)
 
 
 @pytest.fixture(scope="session")
@@ -32,7 +32,14 @@ def client():
 @pytest.fixture(scope="session")
 def locations(client):
     locs = client.get("/api/locations").get_json()
-    return {"main": next(l for l in locs if not l["is_demo"]), "demo": next(l for l in locs if l["is_demo"])}
+    by_domain = lambda key: [l for l in locs if l["domain"] == key]  # noqa: E731
+    return {
+        "main": next(l for l in by_domain("queue") if not l["is_demo"]),
+        "demo": next(l for l in by_domain("queue") if l["is_demo"]),
+        "hospital": by_domain("hospital")[0],
+        "web": by_domain("web")[0],
+        "calls": by_domain("calls")[0],
+    }
 
 
 def pytest_sessionfinish(session, exitstatus):

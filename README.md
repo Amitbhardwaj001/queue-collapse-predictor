@@ -6,83 +6,98 @@
 ![Flask](https://img.shields.io/badge/Flask-dashboard-000000?logo=flask)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-Predicts when a queue is about to become overcrowded, **before** it happens.
+**One engine that predicts when a system is about to collapse under demand, how likely it is, and how many
+servers prevent it.** Anything with *arrivals*, a *service capacity* and a *backlog* plugs in as a domain:
 
-The system watches a queue (college canteen, hospital, bank, ticket counter) through a camera,
-counts people with **YOLOv8**, learns how the queue develops, and uses **XGBoost** to forecast
-the queue size, waiting time and risk of congestion 5–15 minutes ahead. Staff get an early
-warning and a concrete recommendation, such as *"Open 1 more counter now"*. This moves queue management from
-**reactive** to **proactive**.
+| Domain | Backlog | Server | Critical wait |
+|---|---|---|---|
+| **Physical queues** (canteen, bank, tickets) | people, counted by YOLOv8 from a camera | counter | 12 min |
+| **Hospital OPD / ER** | patients | doctor | 90 min |
+| **Web / API servers** | pending requests | worker | 1 min |
+| **Call centre** | callers on hold | agent | 5 min |
 
-![Dashboard: a lunch-time rush turns HIGH risk and the system recommends opening more counters](docs/dashboard.png)
+For every domain, **XGBoost** forecasts the backlog and the **Collapse Radar** (a Monte Carlo queue simulation) tells
+staff *when* collapse is expected, *how likely* it is, and *what to do*: "Add 2 more counters now". This moves
+operations from **reactive** to **proactive**.
 
-## Example
+![Dashboard (earlier single-domain version): a lunch-time rush turns HIGH risk](docs/dashboard.png)
 
-| Current queue | Predicted in 10 min | Expected wait | Risk |
+## The Collapse Radar
+
+| Current queue | Time to collapse | Collapse probability | Safe staffing |
 |:---:|:---:|:---:|:---:|
-| 20 people | 45 people | 15 min | **HIGH** |
+| 20 people, 2 counters | ~6 min (80% range 3-10) | 88 % | 4 counters |
 
-> Recommendation: *Open 1 more counter now – the queue is expected to reach 45 people in 10 minutes.*
+> Recommendation: *Add 2 more counters now - people are expected to reach 45 in 10 minutes. Collapse expected in about 6 min.*
+
+1. The XGBoost forecast (+h1, +h2, +h3) is converted into an **implied arrival rate** per minute.
+2. For every staffing option the radar replays that demand **500 times** with random (Poisson) arrivals, random service
+   and an uncertain demand level.
+3. A path **collapses** when the wait of a new arrival reaches the domain's critical wait.
+4. From the paths it reports the **probability of collapse**, the **time to collapse** (median and 10-90 % range),
+   the **uncertainty band** shown on the chart, and the **smallest number of servers** whose collapse probability is
+   below 10 %. The *What-if staffing simulator* table lets you apply any option and watch the forecast react.
+
+The same random numbers are reused for every option, so adding a server can never look worse than not adding one.
 
 ## Features
 
-- **People detection & counting** in images, videos and a live webcam (YOLOv8)
-- **Queue area (ROI)**: draw the queue zone; people outside it are ignored
-- **Queue forecast** for +5, +10 and +15 minutes
-- **Waiting-time estimate** now and in 10 minutes
-- **LOW / MEDIUM / HIGH risk** plus the probability of critical congestion
-- **Early-warning log** and counter recommendations
-- **Dashboard** with history, forecast, past predictions and the critical level
-- **Simulated live feed** to demonstrate a lunch-time rush without a camera
+- **Multi-domain platform**: physical queues, hospital OPD, web/API servers and call centres on one engine
+- **Collapse Radar**: time-to-collapse, collapse probability, peak load and uncertainty band
+- **What-if staffing simulator** with one-click apply, and **Inject surge** to stress-test a live feed
+- **Early-warning study**: measured warning time against a normal reactive alarm (see Results)
+- **People detection & counting** in images, videos and a live webcam (YOLOv8), with a drawable **queue area**
+- **LOW / MEDIUM / HIGH risk**, early-warning log and recommendations in each domain's own words
+- **Simulated live feeds** for every domain, so the full demo works without a camera
 - **Works offline** after setup; printable **project poster** at `/poster`
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    A[Camera / image / video] --> B[YOLOv8<br/>person detection]
-    B --> C[Queue area filter<br/>& counting]
-    C --> D[(SQLite<br/>queue history)]
-    D --> E[Feature engineering<br/>lags, trend, time, capacity]
-    E --> F[XGBoost<br/>forecast + risk]
-    F --> G[Dashboard<br/>queue, wait, risk, advice]
+    A[Camera / video<br/>or metric feed] --> B[Backlog count<br/>per minute]
+    B --> C[(SQLite history)]
+    C --> D[Feature engineering<br/>lags, trend, time, capacity]
+    D --> E[XGBoost<br/>forecast + critical probability]
+    E --> F[Collapse Radar<br/>Monte Carlo what-if]
+    F --> G[Dashboard<br/>time to collapse, safe staffing, advice]
 ```
 
-1. **Detection:** YOLOv8 detects every person in the frame. A person is counted only if their
-   feet (bottom centre of the box) are inside the queue area.
-2. **History:** each count is stored with a timestamp and turned into a per-minute series.
-3. **Features:** current queue; the queue 1, 2, 3, 5 and 10 minutes ago; growth and volatility;
-   time of day; weekday; open counters; and service capacity.
-4. **Models:**
-   - three `XGBRegressor`s predict the change in queue length over the next 5, 10 and 15 minutes;
-   - one `XGBClassifier` predicts the probability that the wait reaches the critical level
-     (≥ 12 min) within the next 10 minutes.
-5. **Decision:** waiting time = people ÷ (counters × people served per counter per minute).
-   Risk is HIGH at ≥ 12 min or ≥ 60 % critical probability, and MEDIUM at ≥ 6 min or ≥ 30 %. The
-   system recommends enough counters to keep the wait under 8 minutes.
+1. **Sensing:** for physical queues YOLOv8 counts people whose feet are inside the queue area; the other domains
+   receive a backlog number per minute (a live simulated feed in the demo).
+2. **Features:** current backlog; the backlog 1, 2, 3, 5 and 10 minutes ago; growth and volatility; time of day;
+   weekday; open servers; and service capacity.
+3. **Models (per domain):** `XGBRegressor`s predict the change in backlog at three horizons (5/10/15 min for queues
+   and call centres, 15/30/60 for hospitals, 2/5/10 for web servers) and an `XGBClassifier` predicts the probability
+   that the wait reaches the critical level within the main horizon.
+4. **Collapse Radar:** see above.
+5. **Decision:** wait = backlog / (servers x items served per server per minute). Risk is HIGH at the critical wait or
+   >= 60 % critical probability, MEDIUM at the medium wait or >= 30 %.
 
-All thresholds are in [`queue_predictor/config.py`](queue_predictor/config.py).
+Domain settings (vocabulary, thresholds, simulated demand) are in [`queue_predictor/domains.py`](queue_predictor/domains.py).
+**Adding a new domain is one `Domain(...)` entry** plus `python -m queue_predictor.train --domain <key>`.
+Other tuning constants are in [`queue_predictor/config.py`](queue_predictor/config.py).
 
 ## Results
 
-Evaluated on 30 held-out days the models never saw during training (22,650 minutes).
+Everything is evaluated on days the models never saw during training (time-based split, last 20 % of days).
+Training saves, per domain, `models/<domain>_metrics.json` with:
 
-| Horizon | R² | Avg. error (all day) | Avg. error (busy, 10+ people) | Naive "no change" (busy) |
-|---|:---:|:---:|:---:|:---:|
-| +5 min | 0.935 | 1.78 people | 3.87 people | 4.94 people |
-| +10 min | 0.879 | 2.48 people | **5.48 people** | 8.20 people |
-| +15 min | 0.820 | 3.04 people | **6.78 people** | 11.05 people |
+- forecast accuracy (R2 and average error against the naive "no change" guess, overall and in busy periods);
+- the **critical-congestion classifier** ROC-AUC;
+- the **early-warning study**: for every collapse on the unseen days, how many minutes earlier than a reactive alarm
+  (which fires when the wait is already critical) each method warned, and how many false alarms per day it raised.
 
-**Critical-congestion classifier: ROC-AUC 0.974.** At rush hour the 10-minute forecast is about
-33 % more accurate than assuming the queue stays the same.
+The numbers are shown on the dashboard (*Model accuracy* and *Early-warning study*) and on the poster. Sudden bursts
+(class break, ambulance wave, flash sale) cannot be seen in advance, so no method warns early for every collapse;
+the study reports this honestly.
 
 ### About the training data
 
-No public minute-by-minute canteen queue dataset exists, so the models are trained on
-150 simulated days ([`simulate.py`](queue_predictor/simulate.py)). The simulation models
-breakfast, lunch and evening rushes, class-break surges, quieter weekends, people leaving long queues,
-varying service speed, and under- and over-staffing. Every count the system detects is stored in
-`data/queue.db`, so the same pipeline can be retrained on real camera data once it has been collected.
+No public minute-by-minute backlog dataset exists for these systems, so the models are trained on simulated days
+([`simulate.py`](queue_predictor/simulate.py)) with rush hours, sudden bursts, quieter weekends, people giving up
+on long queues, varying service speed, and under- and over-staffing. Every count the system sees is stored in
+`data/queue.db`, so the same pipeline can be retrained on real data once it has been collected.
 
 ## Project structure
 
@@ -90,16 +105,18 @@ varying service speed, and under- and over-staffing. Every count the system dete
 queue-collapse-predictor/
 ├── queue_predictor/          # application package
 │   ├── app.py                # Flask backend and REST API
-│   ├── config.py             # paths, thresholds and settings
+│   ├── config.py             # paths, radar and risk settings
 │   ├── database.py           # SQLite storage
 │   ├── detector.py           # YOLOv8 person detection (OpenCV HOG fallback)
+│   ├── domains.py            # the four application domains (vocabulary, thresholds, demand)
 │   ├── features.py           # feature engineering
-│   ├── predictor.py          # forecast, waiting time, risk, recommendation
-│   ├── simulate.py           # queue simulator (training data + live demo)
-│   ├── train.py              # model training and evaluation
+│   ├── predictor.py          # forecast, waiting time, risk, radar, recommendation
+│   ├── radar.py              # Collapse Radar: Monte Carlo time-to-collapse + what-if staffing
+│   ├── simulate.py           # demand simulator (training data + live demo)
+│   ├── train.py              # per-domain training, evaluation, early-warning study
 │   ├── templates/            # dashboard and poster pages
 │   └── static/               # JavaScript, CSS, Chart.js
-├── tests/                    # pytest suite (API + model)
+├── tests/                    # pytest suite (API, models, radar)
 ├── docs/EXPO_GUIDE.md        # demo script, recording tips, Q&A
 ├── models/                   # trained models (generated, not committed)
 ├── data/                     # database, uploads, results (generated, not committed)
@@ -121,7 +138,7 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate    macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m queue_predictor.train     # trains the models (about a minute)
+python -m queue_predictor.train     # trains all four domains (several minutes, once)
 python run.py                       # http://127.0.0.1:5000
 ```
 
@@ -133,8 +150,9 @@ whole system works without internet.
 
 | Mode | How |
 |---|---|
-| **Simulated live feed** | Select *Demo Canteen* → **Start**. Change *Open counters* while it runs and watch the forecast react. |
-| **Upload footage** | Select *Main Canteen* → upload a photo or video. Videos are sampled every 10 s, so a clip of a few minutes shows a real trend. |
+| **Domain** | Pick Physical queues / Hospital / Web / Call centre with the tabs at the top. |
+| **Simulated live feed** | Select a simulated location → **Start**. Change the open servers while it runs, press **Inject surge**, or use the what-if table's **Apply** and watch the Collapse Radar react. |
+| **Upload footage** | Physical queues → *Main Canteen* → upload a photo or video. Videos are sampled every 10 s, so a clip of a few minutes shows a real trend. |
 | **Webcam** | **Start camera**: a frame is analysed every 10 s. |
 | **Queue area** | After analysing a frame, drag a box around the queue → **Save area**. |
 
@@ -142,13 +160,15 @@ whole system works without internet.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/locations` | List locations and their settings |
+| `GET` | `/api/domains` | List the application domains |
+| `GET` | `/api/locations` | List locations (each has a `domain`) and their settings |
 | `POST` | `/api/locations/<id>/settings` | Set `counters` and `service_time_sec` |
 | `POST` | `/api/locations/<id>/roi` | Set the queue area `[x1, y1, x2, y2]` (0–1) or `null` |
 | `POST` | `/api/locations/<id>/preview` | Recount the last frame with the current queue area |
-| `POST` | `/api/upload/<id>` | Upload an image or video → count + prediction |
-| `GET` | `/api/status/<id>` | Current prediction, history, past predictions, alerts |
+| `POST` | `/api/upload/<id>` | Upload an image or video → count + prediction (physical queues only) |
+| `GET` | `/api/status/<id>` | Prediction incl. `radar` (time to collapse, fan, what-if), history, alerts |
 | `POST` | `/api/demo/<id>/tick` | Advance the simulated feed by one minute |
+| `POST` | `/api/demo/<id>/surge` | Inject a sudden demand surge into the running feed |
 | `POST` | `/api/demo/<id>/reset` | Reset the simulated feed |
 
 ## Running the tests
@@ -158,14 +178,15 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-The tests use temporary folders and a small model, so your data is never touched.
+The tests use temporary folders and small models, so your data is never touched.
 
 ## Limitations and future work
 
-- Models are trained on simulated data and should be retrained on real camera data before deployment.
+- Models are trained on simulated data and should be retrained on real data before deployment.
+- Only physical queues sense their backlog automatically (camera); the other domains need a metric feed
+  (Prometheus, helpdesk API). The next step is a connector that posts the backlog to the API every minute.
 - The queue area is a rectangle; winding queues would need a polygon.
-- Tightly packed people can hide each other; a higher camera position helps.
-- Next steps: person tracking (ByteTrack) to measure real service speed, SMS/app alerts,
+- Next steps: person tracking (ByteTrack) to measure real arrival and service rates, SMS/app alerts,
   multiple cameras per location, and a PostgreSQL backend.
 
 ## License

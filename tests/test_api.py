@@ -1,6 +1,7 @@
 import io
 
 import cv2
+import pytest
 import numpy as np
 
 
@@ -61,3 +62,47 @@ def test_demo_feed_builds_history(client, locations):
     assert len(status["history"]) == 20          # 15 warm-up minutes + 5 ticks
     assert status["prediction"]["horizon_min"] == 10
     assert client.post(f"/api/demo/{locations['main']['id']}/tick").status_code == 400
+
+
+def test_domains_endpoint(client):
+    keys = {d["key"] for d in client.get("/api/domains").get_json()}
+    assert keys == {"queue", "hospital", "web", "calls"}
+
+
+def test_status_contains_collapse_radar(client, locations):
+    loc_id = locations["demo"]["id"]
+    client.post(f"/api/demo/{loc_id}/reset")
+    for _ in range(3):
+        client.post(f"/api/demo/{loc_id}/tick")
+    body = client.get(f"/api/status/{loc_id}").get_json()
+    radar = body["prediction"]["radar"]
+    assert radar["status"] in {"SAFE", "AT_RISK", "IMMINENT", "COLLAPSED"}
+    assert radar["what_if"] and radar["fan"]
+    assert body["domain"]["key"] == "queue"
+
+
+@pytest.mark.parametrize("key", ["hospital", "web", "calls"])
+def test_other_domains_run_a_live_feed(client, locations, key):
+    loc = locations[key]
+    client.post(f"/api/demo/{loc['id']}/reset")
+    for _ in range(4):
+        assert client.post(f"/api/demo/{loc['id']}/tick").status_code == 200
+    body = client.get(f"/api/status/{loc['id']}").get_json()
+    assert body["prediction"]["domain"] == key
+    assert len(body["prediction"]["forecast"]) == 3
+    assert client.post(f"/api/upload/{loc['id']}", data={"file": (_image_bytes(), "q.jpg")},
+                       content_type="multipart/form-data").status_code == 400
+
+
+def test_surge_needs_a_running_feed(client, locations):
+    loc_id = locations["web"]["id"]
+    client.post(f"/api/demo/{loc_id}/reset")
+    assert client.post(f"/api/demo/{loc_id}/surge").status_code == 400
+    client.post(f"/api/demo/{loc_id}/tick")
+    assert client.post(f"/api/demo/{loc_id}/surge").status_code == 200
+
+
+def test_settings_limits_follow_the_domain(client, locations):
+    loc_id = locations["web"]["id"]
+    assert client.post(f"/api/locations/{loc_id}/settings", json={"counters": 40, "service_time_sec": 1}).status_code == 200
+    assert client.post(f"/api/locations/{loc_id}/settings", json={"counters": 8, "service_time_sec": 0.01}).status_code == 400
