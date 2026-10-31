@@ -24,6 +24,8 @@ YOLO_WEIGHTS = MODEL_DIR / "yolov8n.pt"
 PERSON_CONFIDENCE = 0.35
 VIDEO_SAMPLE_SECONDS = 10      # analyse one frame every N seconds of video
 VIDEO_MAX_SAMPLES = 360
+TRACK_FPS = 3                  # frames per second analysed when tracking people
+TRACK_MAX_FRAMES = 2400        # about 13 minutes of video at TRACK_FPS
 
 # Forecasting (horizons and thresholds are defined per domain in domains.py)
 LAGS = [1, 2, 3, 5, 10]        # minutes of history used as features

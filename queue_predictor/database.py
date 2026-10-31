@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS locations (
     service_time_sec REAL NOT NULL,
     is_demo INTEGER NOT NULL DEFAULT 0,
     roi TEXT,
-    domain TEXT NOT NULL DEFAULT 'queue'
+    domain TEXT NOT NULL DEFAULT 'queue',
+    connector TEXT
 );
 CREATE TABLE IF NOT EXISTS observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,6 +40,20 @@ CREATE TABLE IF NOT EXISTS predictions (
     risk TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pred_loc_ts ON predictions(location_id, ts);
+CREATE TABLE IF NOT EXISTS alert_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    location_id INTEGER NOT NULL REFERENCES locations(id),
+    ts TEXT NOT NULL,
+    level TEXT NOT NULL,
+    message TEXT NOT NULL,
+    channels TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS flow_measurements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    location_id INTEGER NOT NULL REFERENCES locations(id),
+    ts TEXT NOT NULL,
+    summary TEXT NOT NULL
+);
 """
 
 
@@ -61,6 +76,8 @@ def init_db():
             conn.execute("ALTER TABLE locations ADD COLUMN roi TEXT")
         if "domain" not in columns:  # databases created before the multi-domain platform
             conn.execute("ALTER TABLE locations ADD COLUMN domain TEXT NOT NULL DEFAULT 'queue'")
+        if "connector" not in columns:  # databases created before live connectors
+            conn.execute("ALTER TABLE locations ADD COLUMN connector TEXT")
         for domain in DOMAINS.values():
             for name, demo in domain.locations:
                 conn.execute(
@@ -73,6 +90,7 @@ def init_db():
 def _location(row):
     location = dict(row)
     location["roi"] = json.loads(location["roi"]) if location["roi"] else None
+    location["connector"] = json.loads(location["connector"]) if location.get("connector") else None
     return location
 
 
@@ -151,3 +169,38 @@ def clear_location_data(location_id):
     with connect() as conn:
         conn.execute("DELETE FROM observations WHERE location_id = ?", (location_id,))
         conn.execute("DELETE FROM predictions WHERE location_id = ?", (location_id,))
+        conn.execute("DELETE FROM alert_log WHERE location_id = ?", (location_id,))
+
+
+def set_connector(location_id, config):
+    """config: dict describing a live feed (see connectors.py) or None to remove it."""
+    with connect() as conn:
+        conn.execute("UPDATE locations SET connector = ? WHERE id = ?",
+                     (json.dumps(config) if config else None, location_id))
+
+
+def add_alert(location_id, ts, level, message, channels):
+    with connect() as conn:
+        conn.execute("INSERT INTO alert_log (location_id, ts, level, message, channels) VALUES (?, ?, ?, ?, ?)",
+                     (location_id, ts.strftime(TS_FORMAT), level, message, ",".join(channels)))
+
+
+def alerts_since(location_id, since, limit=50):
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT ts, level, message, channels FROM alert_log WHERE location_id = ? AND ts >= ? "
+            "ORDER BY ts DESC LIMIT ?", (location_id, since.strftime(TS_FORMAT), limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_flow_measurement(location_id, ts, summary):
+    with connect() as conn:
+        conn.execute("INSERT INTO flow_measurements (location_id, ts, summary) VALUES (?, ?, ?)",
+                     (location_id, ts.strftime(TS_FORMAT), json.dumps(summary)))
+
+
+def latest_flow_measurement(location_id):
+    with connect() as conn:
+        row = conn.execute("SELECT ts, summary FROM flow_measurements WHERE location_id = ? "
+                           "ORDER BY id DESC LIMIT 1", (location_id,)).fetchone()
+    return {"ts": row["ts"], **json.loads(row["summary"])} if row else None

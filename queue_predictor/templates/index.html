@@ -14,6 +14,7 @@
     <p class="sub" id="tagline">One collapse-prediction engine for every system that has arrivals, capacity and a backlog</p>
   </div>
   <div class="loc">
+    <a class="poster-link" id="report-link" href="#" target="_blank">Download report (PDF)</a>
     <a class="poster-link" href="/poster" target="_blank">Project poster</a>
     <label for="location">Location</label>
     <select id="location"></select>
@@ -126,6 +127,51 @@
       </form>
       <p class="muted small" id="thresholds"></p>
       <p class="status" id="settings-status"></p>
+    </div>
+
+    <div class="panel" id="flow-panel">
+      <h2>Measure real flow (person tracking)</h2>
+      <p class="muted">Follows every person through a video and measures how fast people really arrive, get served and wait, instead of guessing the service speed.</p>
+      <form id="flow-form">
+        <input type="file" id="flow-file" accept="video/*">
+        <button type="submit" id="flow-btn">Track people</button>
+      </form>
+      <p class="status" id="flow-status"></p>
+      <div id="flow-result"></div>
+    </div>
+
+    <div class="panel" id="connector-panel">
+      <h2>Live metric connector</h2>
+      <p class="muted">Reads the <span class="item">backlog</span> from a real system once per interval.</p>
+      <form id="connector-form" class="settings">
+        <label>Feed type
+          <select id="conn-kind"><option value="json">JSON URL</option><option value="prometheus">Prometheus</option></select></label>
+        <label>URL <input type="url" id="conn-url" placeholder="http://localhost:9090" required></label>
+        <label id="conn-path-label">JSON path <input type="text" id="conn-path" placeholder="data.queue_depth"></label>
+        <label id="conn-query-label" hidden>Query <input type="text" id="conn-query" placeholder="sum(http_requests_in_flight)"></label>
+        <label>Read every (seconds) <input type="number" id="conn-interval" min="5" value="60"></label>
+        <div class="row">
+          <button type="button" id="conn-test" class="secondary">Test once</button>
+          <button type="submit">Save &amp; start</button>
+          <button type="button" id="conn-stop" class="secondary">Remove</button>
+        </div>
+      </form>
+      <p class="status" id="conn-status"></p>
+      <p class="muted small">No pollable feed? Push readings instead: <code id="ingest-hint"></code></p>
+    </div>
+
+    <div class="panel" id="alert-panel">
+      <h2>Alerts</h2>
+      <p class="muted">Sent when the Collapse Radar says collapse is imminent or the risk is HIGH. The dashboard log below always works; add channels to also get a message.</p>
+      <div id="alert-channels"></div>
+      <label class="inline">Repeat at most every <input type="number" id="alert-cooldown" min="0" step="1" value="5"> min</label>
+      <div class="row">
+        <button type="button" id="alert-save">Save channels</button>
+        <button type="button" id="alert-test" class="secondary">Send test message</button>
+      </div>
+      <p class="status" id="alert-status"></p>
+      <h3>Recent alerts</h3>
+      <ul id="notifications" class="alerts"><li class="muted">No alerts yet.</li></ul>
     </div>
 
     <div class="panel">

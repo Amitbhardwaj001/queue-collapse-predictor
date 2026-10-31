@@ -37,6 +37,14 @@ Open http://127.0.0.1:5000/poster → write your team names in `queue_predictor/
    watch the radar react within a few ticks. Do the same on the hospital or call centre if time allows.
 6. **Camera (30 s).** Back to *Physical queues → Main Canteen*: upload your footage or start the webcam with 3–4 visitors
    in a line. Point at the green boxes and the queue area.
+6b. **Real flow (30 s, optional).** On *Physical queues*, open *Measure real flow*, upload the same video and press
+   **Track people**: it shows how many people arrive and are served per minute and the real waiting time. Press
+   **Use measured service time** so the forecast uses measured speed instead of a guess.
+6c. **Alerts and report (30 s).** While the demo runs, point at *Recent alerts* (IMMINENT, then COLLAPSED). If you set
+   up a Telegram bot beforehand, show the message arriving on your phone. Press **Download report (PDF)** and show
+   the staffing table.
+6d. **Live data (20 s).** Show the *Live metric connector* panel: "this reads queue depth from a real server or
+   Prometheus; any system can also push numbers to our API." Run the `curl` line shown there to add a reading live.
 7. **Proof (30 s).** Scroll to *Early-warning study*: reactive alarm 0 minutes ahead versus the Collapse Radar's
    mean warning time and the false alarms per day. Say openly that sudden bursts cannot be predicted.
 
@@ -59,6 +67,17 @@ critical level is the collapse probability; the first crossing time is the time 
 **How do you know it helps?**
 The early-warning study on unseen days compares a reactive alarm (fires at the critical wait, 0 minutes ahead) with the
 classifier and the radar: how many collapses were warned about early, the mean warning time and false alarms per day.
+
+**How does person tracking help?** Counting only gives the queue length. Tracking follows each person, so we measure
+real arrival and service rates and waiting time, and the forecast no longer depends on a guessed service speed.
+*It is tested on synthetic video; say so if asked about real footage.*
+
+**How do alerts work, and do they spam?** An alert fires when collapse becomes imminent or the risk is HIGH, and again
+only if it gets worse or after a cool-down. Channels: Telegram, email, SMS (Twilio), webhook. Set up Telegram before the
+expo: create a bot with @BotFather, send it a message, and paste the token and your chat ID in the Alerts panel.
+
+**Can it use real data?** Yes: a live connector reads a JSON URL or Prometheus query, and any system can push readings to
+`POST /api/ingest/<id>`. The models are still trained on simulated data until real data is collected.
 
 **Why XGBoost and not an LSTM?** The inputs are a small table of features. Gradient-boosted trees are the strongest
 method for that kind of data, train in a minute without a GPU and are easy to explain.

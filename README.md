@@ -46,6 +46,11 @@ The same random numbers are reused for every option, so adding a server can neve
 - **Collapse Radar**: time-to-collapse, collapse probability, peak load and uncertainty band
 - **What-if staffing simulator** with one-click apply, and **Inject surge** to stress-test a live feed
 - **Early-warning study**: measured warning time against a normal reactive alarm (see Results)
+- **Person tracking**: follows every person through a video and measures the *real* arrival rate, service rate and
+  waiting time (see [Integrations](#integrations))
+- **Alerts** to Telegram, email, SMS (Twilio) or any webhook when collapse is imminent
+- **Live metric connector**: reads the backlog of a real system (JSON URL or Prometheus), or accepts pushed readings
+- **PDF report** per location: risk episodes, alerts sent, staffing advice and forecast reliability
 - **People detection & counting** in images, videos and a live webcam (YOLOv8), with a drawable **queue area**
 - **LOW / MEDIUM / HIGH risk**, early-warning log and recommendations in each domain's own words
 - **Simulated live feeds** for every domain, so the full demo works without a camera
@@ -78,6 +83,49 @@ Domain settings (vocabulary, thresholds, simulated demand) are in [`queue_predic
 **Adding a new domain is one `Domain(...)` entry** plus `python -m queue_predictor.train --domain <key>`.
 Other tuning constants are in [`queue_predictor/config.py`](queue_predictor/config.py).
 
+## Integrations
+
+### Person tracking and real flow measurement
+`Measure real flow` (physical queues) follows every person through a video with a ByteTrack-style tracker
+([`tracker.py`](queue_predictor/tracker.py)): confident detections are matched to existing tracks first, then weak
+detections (people half hidden in the queue) get a second chance to keep a track alive. From the tracks it measures:
+
+- **arrival rate** (people entering the queue area per minute),
+- **service rate** (people leaving it per minute while the queue is busy) and the implied **service time per counter**,
+- the **average waiting time** (time between entering and leaving) and the utilisation (arrivals / served).
+
+**Use measured service time** copies the measurement into the settings, so the forecast no longer relies on a guess.
+People already in the queue at the start of the video, or still there at its end, are not counted, because their
+entry or exit was not seen. A person who leaves the area counts as served; giving up cannot be told apart.
+The tracker is our own implementation of ByteTrack's association idea (no Kalman filter), not the Ultralytics tracker.
+
+### Alerts
+When the Collapse Radar says **collapse imminent / collapsed**, or the risk is HIGH, the system raises an alert:
+
+| Channel | You provide |
+|---|---|
+| Dashboard log | nothing (always on) |
+| Telegram | bot token (from @BotFather) and chat ID |
+| Email | SMTP host, port, login, from and to addresses |
+| SMS | Twilio account SID, auth token, from and to numbers |
+| Webhook | a URL (Slack and Discord incoming webhooks work) |
+
+An alert is repeated only when the situation gets worse or after the cool-down (default 5 min). Settings are stored in
+`data/alerts.json` on the computer running the dashboard; secrets are masked in the browser. **Send test message**
+checks a channel. The channel senders were tested with fakes, not against the real services, so test each one once.
+
+### Live metric connector
+Any location can read its backlog from a real system every N seconds (minimum 5):
+
+- **JSON URL**: GET a URL and pick the number with a dotted path such as `data.queue_depth`;
+- **Prometheus**: run an instant query such as `sum(http_requests_in_flight)` against `http://host:9090`;
+- **Push**: `POST /api/ingest/<location id>` with `{"count": 42}` or `{"readings": [{"ts": "...", "count": 42}]}`.
+
+### PDF report
+**Download report (PDF)** (top right) creates a one-page report for the selected location: summary of the last 24 hours,
+collapse-risk episodes, alerts sent, the staffing advice table, measured flow if available, and how reliable the
+forecasts are.
+
 ## Results
 
 Everything is evaluated on days the models never saw during training (time-based split, last 20 % of days).
@@ -104,15 +152,19 @@ on long queues, varying service speed, and under- and over-staffing. Every count
 ```
 queue-collapse-predictor/
 ├── queue_predictor/          # application package
+│   ├── alerts.py             # Telegram / email / SMS / webhook alerts and the alert log
 │   ├── app.py                # Flask backend and REST API
 │   ├── config.py             # paths, radar and risk settings
+│   ├── connectors.py         # live metric feeds (JSON URL, Prometheus)
 │   ├── database.py           # SQLite storage
 │   ├── detector.py           # YOLOv8 person detection (OpenCV HOG fallback)
 │   ├── domains.py            # the four application domains (vocabulary, thresholds, demand)
 │   ├── features.py           # feature engineering
 │   ├── predictor.py          # forecast, waiting time, risk, radar, recommendation
 │   ├── radar.py              # Collapse Radar: Monte Carlo time-to-collapse + what-if staffing
+│   ├── report.py             # PDF report
 │   ├── simulate.py           # demand simulator (training data + live demo)
+│   ├── tracker.py            # ByteTrack-style person tracking + flow measurement
 │   ├── train.py              # per-domain training, evaluation, early-warning study
 │   ├── templates/            # dashboard and poster pages
 │   └── static/               # JavaScript, CSS, Chart.js
@@ -167,6 +219,14 @@ whole system works without internet.
 | `POST` | `/api/locations/<id>/preview` | Recount the last frame with the current queue area |
 | `POST` | `/api/upload/<id>` | Upload an image or video → count + prediction (physical queues only) |
 | `GET` | `/api/status/<id>` | Prediction incl. `radar` (time to collapse, fan, what-if), history, alerts |
+| `POST` | `/api/track/<id>` | Upload a video: track people, measure arrival/service rates, update the forecast |
+| `POST` | `/api/locations/<id>/apply-flow` | Use the measured service time as the location's service time |
+| `POST` | `/api/ingest/<id>` | Push readings `{"count": n}` or `{"readings": [{"ts", "count"}]}` |
+| `GET/POST/DELETE` | `/api/locations/<id>/connector` | Read / save and start / remove a live metric feed |
+| `POST` | `/api/locations/<id>/connector/test` | Read the feed once with the submitted settings |
+| `GET/POST` | `/api/alerts/settings` | Alert channels and cool-down (secrets masked) |
+| `POST` | `/api/alerts/test` | Send a test message to the enabled channels |
+| `GET` | `/api/report/<id>.pdf` | PDF report for a location |
 | `POST` | `/api/demo/<id>/tick` | Advance the simulated feed by one minute |
 | `POST` | `/api/demo/<id>/surge` | Inject a sudden demand surge into the running feed |
 | `POST` | `/api/demo/<id>/reset` | Reset the simulated feed |
@@ -183,11 +243,13 @@ The tests use temporary folders and small models, so your data is never touched.
 ## Limitations and future work
 
 - Models are trained on simulated data and should be retrained on real data before deployment.
-- Only physical queues sense their backlog automatically (camera); the other domains need a metric feed
-  (Prometheus, helpdesk API). The next step is a connector that posts the backlog to the API every minute.
+- Only physical queues sense their backlog automatically (camera); the other domains need a live feed
+  (JSON URL or Prometheus) or pushed readings. The connectors were tested against fake feeds, not a real server.
+- Person tracking was tested on synthetic video. It has not been validated on real canteen footage, and it cannot tell
+  a person who was served from one who gave up.
+- Alert channels were tested with fakes; Telegram, SMTP and Twilio need your own credentials and a first test message.
 - The queue area is a rectangle; winding queues would need a polygon.
-- Next steps: person tracking (ByteTrack) to measure real arrival and service rates, SMS/app alerts,
-  multiple cameras per location, and a PostgreSQL backend.
+- Next steps: validate tracking on real footage, multiple cameras per location, user logins, and a PostgreSQL backend.
 
 ## License
 

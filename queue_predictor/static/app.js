@@ -50,7 +50,7 @@ function selectDomain(key, preferredLocation) {
 function applyDomainLabels() {
   const d = domain();
   document.querySelectorAll(".item").forEach((e) => (e.textContent = d.item));
-  document.querySelectorAll(".item-one").forEach((e) => (e.textContent = d.item.replace(/s$/, "")));
+  document.querySelectorAll(".item-one").forEach((e) => (e.textContent = d.item_one));
   document.querySelectorAll(".server").forEach((e) => (e.textContent = plural(d.server, 2)));
   $("tagline").textContent = d.tagline;
   $("thresholds").textContent =
@@ -59,7 +59,7 @@ function applyDomainLabels() {
   $("counters").max = d.max_servers;
   $("service").min = d.service_sec_limits[0];
   $("service").max = d.service_sec_limits[1];
-  ["upload-panel", "roi-panel", "camera-block"].forEach((id) => ($(id).hidden = !d.camera));
+  ["upload-panel", "roi-panel", "camera-block", "flow-panel"].forEach((id) => ($(id).hidden = !d.camera));
   renderMetrics();
 }
 
@@ -75,6 +75,12 @@ function onLocationChange() {
   $("roi-save").disabled = true;
   showStatus("roi-status", loc.roi ? "A queue area is set for this location." : "Counting the whole frame.");
   showStatus("demo-status", "");
+  $("report-link").href = `/api/report/${locationId}.pdf`;
+  $("ingest-hint").textContent =
+    `curl -X POST ${window.location.origin}/api/ingest/${locationId} -H "Content-Type: application/json" -d '{"count": 42}'`;
+  $("flow-result").innerHTML = "";
+  showStatus("flow-status", "");
+  loadConnector();
   refresh();
 }
 
@@ -122,6 +128,8 @@ function render(status) {
 
   renderChart(status);
   renderAlerts(status.alerts || [], d);
+  renderNotifications(status.notifications || []);
+  if (status.flow) renderFlow(status.flow);
 }
 
 function renderRadar(p, d) {
@@ -191,7 +199,7 @@ function renderMetrics() {
     `<tr><td>+${h} min</td><td>${v.r2}</td><td>${v.mae}</td><td><strong>${v.busy_mae}</strong></td><td>${v.busy_baseline_mae}</td></tr>`).join("");
   $("metrics").innerHTML =
     `<table class="metrics"><tr><th>Horizon</th><th>R²</th><th>MAE (all day)</th><th>MAE (busy)</th><th>Naive (busy)</th></tr>${rows}</table>` +
-    `<p class="muted small">Critical-congestion classifier AUC: ${m.critical.auc} (${m.critical.auc_before_collapse ?? "�"} when the queue is not critical yet, i.e. foreseeing the collapse). MAE = average error in ${d.item}. ` +
+    `<p class="muted small">Critical-congestion classifier AUC: ${m.critical.auc} (${m.critical.auc_before_collapse ?? "–"} when the queue is not critical yet, i.e. foreseeing the collapse). MAE = average error in ${d.item}. ` +
     `"Busy" = ${m.busy_definition}. "Naive" assumes the backlog stays the same.</p>`;
 
   const e = m.early_warning;
@@ -526,4 +534,155 @@ $("location").addEventListener("change", (e) => {
 document.querySelectorAll(".domain-tab").forEach((b) =>
   b.addEventListener("click", () => selectDomain(b.dataset.domain)));
 
+/* ---------- flow measurement (person tracking) ---------- */
+function renderFlow(f) {
+  const box = (value, label) => `<div><b>${value}</b><span>${label}</span></div>`;
+  $("flow-result").innerHTML =
+    `<div class="flow-grid">${box(f.arrival_rate_per_min, "arrive / min")}${box(f.departure_rate_per_min, "served / min")}` +
+    `${box(f.avg_wait_min == null ? "n/a" : `${f.avg_wait_min} min`, `avg wait (${f.wait_samples} people)`)}` +
+    `${box(f.suggested_service_time_sec == null ? "n/a" : `${f.suggested_service_time_sec} s`, "service time per counter")}` +
+    `${box(f.utilisation == null ? "n/a" : `${Math.round(f.utilisation * 100)}%`, "arrivals ÷ served")}</div>` +
+    `<p class="muted small">${f.arrivals} arrived and ${f.departures} left in ${f.duration_sec}s of video. ` +
+    "A person who leaves the area is counted as served (giving up cannot be told apart).</p>" +
+    (f.suggested_service_time_sec ? '<button id="flow-apply">Use measured service time</button>' : "");
+  const apply = $("flow-apply");
+  if (apply) apply.onclick = async () => {
+    try {
+      const updated = await api(`/api/locations/${locationId}/apply-flow`, { method: "POST" });
+      Object.assign(currentLocation(), updated);
+      $("service").value = updated.service_time_sec;
+      showStatus("flow-status", `Service time set to ${updated.service_time_sec} s per counter.`);
+      await refresh();
+    } catch (err) { showStatus("flow-status", err.message, true); }
+  };
+}
+
+$("flow-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const file = $("flow-file").files[0];
+  if (!file) return showStatus("flow-status", "Choose a video first.", true);
+  const form = new FormData();
+  form.append("file", file);
+  $("flow-btn").disabled = true;
+  showStatus("flow-status", "Tracking people frame by frame… this takes a while for long clips.");
+  try {
+    const res = await api(`/api/track/${locationId}`, { method: "POST", body: form });
+    showStatus("flow-status", `${res.detector}: flow measured.`);
+    showResult(res);
+    renderFlow(res.flow);
+    await refresh();
+  } catch (err) {
+    showStatus("flow-status", err.message, true);
+  } finally {
+    $("flow-btn").disabled = false;
+  }
+});
+
+/* ---------- live metric connector ---------- */
+function connKindChanged() {
+  const prom = $("conn-kind").value === "prometheus";
+  $("conn-path-label").hidden = prom;
+  $("conn-query-label").hidden = !prom;
+}
+$("conn-kind").addEventListener("change", connKindChanged);
+
+function connectorBody() {
+  return {
+    kind: $("conn-kind").value, url: $("conn-url").value, path: $("conn-path").value,
+    query: $("conn-query").value, interval_sec: +$("conn-interval").value,
+  };
+}
+
+async function loadConnector() {
+  try {
+    const view = await api(`/api/locations/${locationId}/connector`);
+    const c = view.config;
+    if (c) {
+      $("conn-kind").value = c.kind; $("conn-url").value = c.url;
+      $("conn-path").value = c.path || ""; $("conn-query").value = c.query || "";
+      $("conn-interval").value = c.interval_sec;
+    } else {
+      $("conn-url").value = ""; $("conn-path").value = ""; $("conn-query").value = "";
+    }
+    connKindChanged();
+    const st = view.state;
+    showStatus("conn-status", !c ? "No live feed connected." :
+      st?.error ? `Error: ${st.error}` :
+      st?.last_time ? `Running. Last reading ${st.last_value} at ${st.last_time}.` :
+      view.running ? "Running. Waiting for the first reading…" : "Saved but not running.", !!st?.error);
+  } catch (err) { showStatus("conn-status", err.message, true); }
+}
+
+$("conn-test").addEventListener("click", async () => {
+  try {
+    const res = await api(`/api/locations/${locationId}/connector/test`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(connectorBody()) });
+    showStatus("conn-status", `Read ${res.value} ${domain().item} from the feed.`);
+    await refresh();
+  } catch (err) { showStatus("conn-status", err.message, true); }
+});
+
+$("connector-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api(`/api/locations/${locationId}/connector`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(connectorBody()) });
+    showStatus("conn-status", "Saved. Reading the feed…");
+    setTimeout(() => { loadConnector(); refresh(); }, 2500);
+  } catch (err) { showStatus("conn-status", err.message, true); }
+});
+
+$("conn-stop").addEventListener("click", async () => {
+  await api(`/api/locations/${locationId}/connector`, { method: "DELETE" });
+  loadConnector();
+});
+
+/* ---------- alerts ---------- */
+const CHANNELS = {
+  telegram: { title: "Telegram", fields: [["bot_token", "Bot token", "password"], ["chat_id", "Chat ID", "text"]] },
+  email: { title: "Email (SMTP)", fields: [["host", "SMTP host", "text"], ["port", "Port", "number"], ["username", "Username", "text"],
+    ["password", "Password", "password"], ["sender", "From address", "text"], ["recipients", "Send to (comma separated)", "text"]] },
+  sms: { title: "SMS (Twilio)", fields: [["account_sid", "Account SID", "text"], ["auth_token", "Auth token", "password"],
+    ["from_number", "From number", "text"], ["to_number", "To number", "text"]] },
+  webhook: { title: "Webhook (Slack, Discord, any URL)", fields: [["url", "URL", "url"]] },
+};
+
+async function loadAlertSettings() {
+  const settings = await api("/api/alerts/settings");
+  $("alert-cooldown").value = settings.cooldown_min;
+  $("alert-channels").innerHTML = Object.entries(CHANNELS).map(([key, ch]) =>
+    `<details class="channel" ${settings[key].enabled ? "open" : ""}><summary>${ch.title}${settings[key].enabled ? " · on" : ""}</summary>` +
+    `<div class="fields"><label class="inline"><input type="checkbox" data-ch="${key}" data-field="enabled" ${settings[key].enabled ? "checked" : ""}> Enabled</label>` +
+    ch.fields.map(([f, label, type]) =>
+      `<label>${label}<input type="${type}" data-ch="${key}" data-field="${f}" value="${String(settings[key][f] ?? "").replace(/"/g, "&quot;")}"></label>`).join("") +
+    "</div></details>").join("");
+}
+
+$("alert-save").addEventListener("click", async () => {
+  const body = { cooldown_min: +$("alert-cooldown").value };
+  document.querySelectorAll("#alert-channels [data-ch]").forEach((el) => {
+    (body[el.dataset.ch] ||= {})[el.dataset.field] = el.type === "checkbox" ? el.checked : el.value;
+  });
+  try {
+    await api("/api/alerts/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    showStatus("alert-status", "Saved. Secrets stay on this computer and are never shown again.");
+    loadAlertSettings();
+  } catch (err) { showStatus("alert-status", err.message, true); }
+});
+
+$("alert-test").addEventListener("click", async () => {
+  try {
+    const res = await api("/api/alerts/test", { method: "POST" });
+    showStatus("alert-status", Object.entries(res.results).map(([c, r]) => `${c}: ${r}`).join(" | "));
+  } catch (err) { showStatus("alert-status", err.message, true); }
+});
+
+function renderNotifications(items) {
+  $("notifications").innerHTML = items.length ? items.map((n) =>
+    `<li class="HIGH"><strong>${n.ts.slice(11, 16)} · ${n.level}</strong> → ${n.channels.replace(/,/g, ", ")}` +
+    `<pre>${n.message.replace(/</g, "&lt;")}</pre></li>`).join("") : '<li class="muted">No alerts yet.</li>';
+}
+
+loadAlertSettings();
 loadLocations();
+

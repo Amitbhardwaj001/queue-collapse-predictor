@@ -54,6 +54,10 @@ class Domain:
     locations: tuple = field(default_factory=tuple)   # (name, is_demo)
 
     @property
+    def item_one(self):
+        return "person" if self.item == "people" else self.item.rstrip("s")
+
+    @property
     def history_min(self):
         """Minutes of recent history the models need."""
         return max(30, max(self.lags) + 5)
@@ -73,7 +77,7 @@ class Domain:
             "server": self.server, "horizons": list(self.horizons), "main_horizon": self.main_horizon,
             "medium_wait": self.medium_wait, "high_wait": self.high_wait, "target_wait": self.target_wait,
             "max_servers": self.max_servers, "service_sec_limits": list(self.service_sec_limits),
-            "camera": self.camera,
+            "camera": self.camera, "item_one": self.item_one,
         }
 
 

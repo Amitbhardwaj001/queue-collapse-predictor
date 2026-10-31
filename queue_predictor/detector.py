@@ -13,7 +13,9 @@ import uuid
 
 import cv2
 
-from .config import PERSON_CONFIDENCE, RESULT_DIR, VIDEO_MAX_SAMPLES, VIDEO_SAMPLE_SECONDS, YOLO_WEIGHTS
+from .config import (PERSON_CONFIDENCE, RESULT_DIR, TRACK_FPS, TRACK_MAX_FRAMES, VIDEO_MAX_SAMPLES,
+                     VIDEO_SAMPLE_SECONDS, YOLO_WEIGHTS)
+from .tracker import ByteTracker, FlowMeter
 
 os.environ.setdefault("YOLO_OFFLINE", "1")  # never try to reach the internet during a demo
 
@@ -140,3 +142,53 @@ class PersonDetector:
         duration = max(total / fps, samples[-1][0])
         _, image, raw = self._analyse(busiest[1], roi)
         return samples, duration, image, raw
+
+    def track_video(self, path, roi=None, servers=1):
+        """Follow every person through the video and measure the real flow.
+
+        Returns (samples, duration_sec, flow summary, annotated image name, raw frame name);
+        samples are (offset_sec, people in the queue area) every VIDEO_SAMPLE_SECONDS.
+        """
+        cap = cv2.VideoCapture(str(path))
+        if not cap.isOpened():
+            raise ValueError("Could not read the video file.")
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25
+        step = max(1, int(round(fps / TRACK_FPS)))
+        tracker = ByteTracker()
+        samples, next_sample, busiest = [], 0.0, (-1, None, None)
+        width = height = 0
+        frame_no, analysed, last_t = 0, 0, 0.0
+        while analysed < TRACK_MAX_FRAMES:
+            ok = cap.grab()
+            if not ok:
+                break
+            if frame_no % step == 0:
+                ok, frame = cap.retrieve()
+                if not ok:
+                    break
+                height, width = frame.shape[:2]
+                t = frame_no / fps
+                detections = self.detect(frame)
+                visible = tracker.update(detections, t)
+                inside = [d for d in detections if in_roi(d, roi, width, height)]
+                outside = [d for d in detections if not in_roi(d, roi, width, height)]
+                if t >= next_sample and len(samples) < VIDEO_MAX_SAMPLES:
+                    samples.append((t, len(inside)))
+                    next_sample += VIDEO_SAMPLE_SECONDS
+                if len(inside) > busiest[0]:
+                    busiest = (len(inside), frame.copy(), (inside, outside, visible))
+                analysed += 1
+                last_t = t
+            frame_no += 1
+        cap.release()
+        if not samples:
+            raise ValueError("The video contains no readable frames.")
+
+        summary = FlowMeter(width, height, max(last_t, 1.0), roi).measure(tracker.all_tracks(), servers)
+        _, frame, (inside, outside, visible) = busiest
+        image = self.annotate(frame, inside, outside, roi)
+        for track in visible:
+            x1, y1 = int(track.box[0]), int(track.box[1])
+            cv2.putText(image, f"#{track.id}", (x1, y1 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        return (samples, max(last_t, samples[-1][0]), summary,
+                self._save(image, "result"), self._save(frame, "frame"))

@@ -7,13 +7,15 @@ import threading
 from datetime import datetime, timedelta
 
 import numpy as np
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 
+from . import alerts, connectors
 from . import database as db
 from .config import HISTORY_WINDOW_MIN, RESULT_DIR, UPLOAD_DIR, metrics_path, model_path
 from .domains import DOMAINS
 from .predictor import QueuePredictor
+from .report import build_report
 from .simulate import QueueSimulator
 
 IMAGE_TYPES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -50,6 +52,19 @@ def get_detector():
         return _detector
 
 
+def _on_connector_reading(location_id, ts, count):
+    db.add_observations(location_id, [(ts, count)], "connector")
+    location = db.get_location(location_id)
+    if location:
+        predict_and_store(location)
+
+
+connector_manager = connectors.ConnectorManager(_on_connector_reading)
+for _location in db.list_locations():
+    if _location["connector"]:
+        connector_manager.start(_location["id"], _location["connector"])
+
+
 def predict_and_store(location):
     latest = db.latest_timestamp(location["id"])
     if latest is None:
@@ -59,6 +74,7 @@ def predict_and_store(location):
     result = predictors[location["domain"]].predict(
         observations, location["counters"], location["service_time_sec"], what_if=False)
     db.add_prediction(location["id"], result)
+    alerts.maybe_alert(location, domain, result)
     return result
 
 
@@ -134,6 +150,8 @@ def status(location_id):
         past_predictions=[{"t": minutes_from_now(r.ts + timedelta(minutes=int(r.horizon_min))),
                            "queue": int(r.predicted_queue), "risk": r.risk}
                           for r in past.itertuples()],
+        flow=db.latest_flow_measurement(location_id),
+        notifications=db.alerts_since(location_id, latest - timedelta(hours=24), limit=15),
         alerts=[{"time": r.ts.strftime("%H:%M"), "queue": int(r.current_queue),
                  "predicted": int(r.predicted_queue), "probability": float(r.critical_probability),
                  "risk": r.risk}
@@ -184,6 +202,50 @@ def upload(location_id):
                    frame=frame, samples=samples, prediction=predict_and_store(location))
 
 
+@app.post("/api/track/<int:location_id>")
+def track(location_id):
+    """Upload a video: follow every person, measure real arrival/service rates and update the forecast."""
+    location, error = location_or_404(location_id)
+    if error:
+        return error
+    if not DOMAINS[location["domain"]].camera:
+        return jsonify(error="Person tracking is only used for physical queues"), 400
+    file = request.files.get("file")
+    name = secure_filename(file.filename) if file and file.filename else ""
+    suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if suffix not in VIDEO_TYPES:
+        return jsonify(error="Upload a video file (mp4, avi, mov, mkv or webm)."), 400
+    path = UPLOAD_DIR / f"{datetime.now():%Y%m%d_%H%M%S_%f}_{name}"
+    file.save(path)
+    detector = get_detector()
+    try:
+        samples, duration, flow, image, frame = detector.track_video(path, location["roi"], location["counters"])
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    now = datetime.now().replace(microsecond=0)
+    start = now - timedelta(seconds=duration)
+    db.add_observations(location_id, [(start + timedelta(seconds=o), c) for o, c in samples], "video")
+    db.add_flow_measurement(location_id, now, flow)
+    return jsonify(flow=flow, detector=detector.backend, image=f"/results/{image}", frame=frame,
+                   count=samples[-1][1], prediction=predict_and_store(location))
+
+
+@app.post("/api/locations/<int:location_id>/apply-flow")
+def apply_flow(location_id):
+    """Use the service time measured from video as this location's service time."""
+    location, error = location_or_404(location_id)
+    if error:
+        return error
+    flow = db.latest_flow_measurement(location_id)
+    suggested = flow and flow.get("suggested_service_time_sec")
+    if not suggested:
+        return jsonify(error="No measured service time yet - analyse a video where people are being served"), 400
+    domain = DOMAINS[location["domain"]]
+    low, high = domain.service_sec_limits
+    db.update_location(location_id, location["counters"], float(min(high, max(low, suggested))))
+    return jsonify(db.get_location(location_id))
+
+
 @app.get("/results/<path:name>")
 def result_image(name):
     return send_from_directory(RESULT_DIR, name)
@@ -220,6 +282,118 @@ def preview_roi(location_id):
     detector = get_detector()
     count, image, _ = detector.process_image(path, location["roi"])
     return jsonify(count=count, detector=detector.backend, image=f"/results/{image}")
+
+
+def _connector_view(location_id, location):
+    return {"config": location["connector"], "running": connector_manager.running(location_id),
+            "state": connector_manager.state.get(location_id)}
+
+
+@app.post("/api/ingest/<int:location_id>")
+def ingest(location_id):
+    """Push readings from another system. Body: {"count": 42} or {"readings": [{"ts": "...", "count": 42}]}."""
+    location, error = location_or_404(location_id)
+    if error:
+        return error
+    data = request.get_json(force=True, silent=True) or {}
+    readings = data.get("readings") or ([{"ts": data.get("ts"), "count": data["count"]}] if "count" in data else [])
+    rows = []
+    try:
+        for item in readings:
+            ts = datetime.fromisoformat(item["ts"]) if item.get("ts") else datetime.now()
+            count = int(round(float(item["count"])))
+            if count < 0:
+                raise ValueError("count must not be negative")
+            rows.append((ts.replace(microsecond=0, tzinfo=None), count))
+    except (KeyError, TypeError, ValueError) as exc:
+        return jsonify(error=f"Invalid reading: {exc}"), 400
+    if not rows:
+        return jsonify(error='Send {"count": <items waiting>} or {"readings": [...]}'), 400
+    db.add_observations(location_id, rows, "api")
+    return jsonify(stored=len(rows), prediction=predict_and_store(location))
+
+
+@app.get("/api/locations/<int:location_id>/connector")
+def get_connector(location_id):
+    location, error = location_or_404(location_id)
+    return error or jsonify(_connector_view(location_id, location))
+
+
+@app.post("/api/locations/<int:location_id>/connector")
+def set_connector(location_id):
+    """Save and start a live feed. Body: {"kind": "json"|"prometheus", "url": ..., "path"/"query": ..., "interval_sec": 60}."""
+    location, error = location_or_404(location_id)
+    if error:
+        return error
+    try:
+        config = connectors.validate(request.get_json(force=True))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    db.set_connector(location_id, config)
+    connector_manager.start(location_id, config)
+    return jsonify(_connector_view(location_id, db.get_location(location_id)))
+
+
+@app.post("/api/locations/<int:location_id>/connector/test")
+def test_connector(location_id):
+    """Read the feed once with the submitted settings (stores the reading) and report the value."""
+    location, error = location_or_404(location_id)
+    if error:
+        return error
+    try:
+        config = connectors.validate(request.get_json(force=True))
+        value = connector_manager.poll_now(location_id, config)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception as exc:
+        return jsonify(error=f"Could not read the feed: {type(exc).__name__}: {exc}"), 502
+    return jsonify(value=value)
+
+
+@app.delete("/api/locations/<int:location_id>/connector")
+def delete_connector(location_id):
+    location, error = location_or_404(location_id)
+    if error:
+        return error
+    connector_manager.stop(location_id)
+    db.set_connector(location_id, None)
+    return jsonify(_connector_view(location_id, db.get_location(location_id)))
+
+
+@app.get("/api/alerts/settings")
+def alert_settings():
+    return jsonify(alerts.public_settings())
+
+
+@app.post("/api/alerts/settings")
+def save_alert_settings():
+    try:
+        return jsonify(alerts.save_settings(request.get_json(force=True)))
+    except (TypeError, ValueError) as exc:
+        return jsonify(error=f"Invalid settings: {exc}"), 400
+
+
+@app.post("/api/alerts/test")
+def test_alert():
+    results, _ = alerts.deliver("TEST: AI Queue Collapse Predictor can reach you. "
+                                "Real alerts look like this when a collapse is imminent.")
+    if not results:
+        return jsonify(error="Enable at least one channel first (the dashboard log always works)"), 400
+    return jsonify(results=results)
+
+
+@app.get("/api/report/<int:location_id>.pdf")
+def report(location_id):
+    """PDF summary of the last 24 hours of data and the staffing advice for the current situation."""
+    location, error = location_or_404(location_id)
+    if error:
+        return error
+    domain = DOMAINS[location["domain"]]
+    metrics = load_metrics().get(domain.key)
+    pdf = build_report(location, domain, predictors[domain.key], metrics, db.latest_flow_measurement(location_id))
+    name = secure_filename(f"{location['name']}-report-{datetime.now():%Y%m%d-%H%M}") or "report"
+    return Response(pdf, mimetype="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename={name}.pdf"})
 
 
 @app.get("/poster")
@@ -286,6 +460,7 @@ def demo_reset(location_id):
         return jsonify(error="Only the demo location can be reset"), 400
     _demo.pop(location_id, None)
     db.clear_location_data(location_id)
+    alerts.reset(location_id)
     return jsonify(ok=True)
 
 
